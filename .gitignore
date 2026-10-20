@@ -19,6 +19,8 @@ Bento/Share/Info.plist
 Bento/Bento.entitlements
 Bento/Share/BentoShare.entitlements
 build/
+build-device/
+build-testflight/
 DerivedData/
 .DS_Store
 __pycache__/

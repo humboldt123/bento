@@ -94,13 +94,13 @@ final class StudyProgress {
     /// Never studied
     func newCount(in deck: Deck) -> Int { deck.cards.filter(isNew).count }
 
-    /// "3 due · 12 new", "12 new", or "all caught up"
+    /// "3 to review · 12 new", "12 new", or "all caught up"
     static func summary(due: Int, new: Int) -> String {
         switch (due, new) {
         case (0, 0): "all caught up"
-        case (_, 0): "\(due) due"
+        case (_, 0): "\(due) to review"
         case (0, _): "\(new) new"
-        default: "\(due) due · \(new) new"
+        default: "\(due) to review · \(new) new"
         }
     }
 

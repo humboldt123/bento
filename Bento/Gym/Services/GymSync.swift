@@ -1,7 +1,7 @@
 import SwiftUI
 import SwiftData
 
-/// Gyms and workout history live in Notion (Bento › Gyms and Gym Log). Gyms are pulled into
+/// Gyms and workout history live in Notion (Bento › Gyms › Locations and Gym Log). Gyms are pulled into
 /// SwiftData; workouts sync both ways, one Gym Log row per day in the export format.
 @MainActor
 enum GymSync {
@@ -43,14 +43,21 @@ enum GymSync {
         UserDefaults.standard.set(homes, forKey: homesKey)
     }
 
-    /// Pulls days that aren't here yet, then writes local days that are missing or different in Notion
+    /// Pulls days that aren't here yet, then writes local days that are missing or different in Notion.
+    /// A row is Split (title, e.g. "Pull"), Date, Gym and Exercises (the "- Name: 70×12, …" lines).
     private static func syncLog(_ api: NotionAPI, _ db: String, _ store: ExerciseStore, _ context: ModelContext) async {
         guard let rows = try? await api.queryAll(db) else { return }
+        let day = DateFormatter()
+        day.locale = Locale(identifier: "en_US_POSIX")
+        day.dateFormat = "yyyy-MM-dd"
+
         var remote: [String: (page: String, log: String)] = [:]
         for row in rows {
-            let log = row.text("Log")
-            guard let key = log.split(separator: "\n").first.map({ String($0.prefix(10)) }) else { continue }
-            remote[key] = (row.id, log)
+            guard let date = row.date("Date") else { continue }
+            let key = day.string(from: date)
+            let header = [key, row.text("Split").isEmpty ? "Workout" : row.text("Split"), row.select("Gym")]
+                .compactMap { $0 }.joined(separator: " · ")
+            remote[key] = (row.id, header + "\n" + row.text("Exercises"))
         }
 
         let existing = (try? context.fetch(FetchDescriptor<WorkoutSession>())) ?? []
@@ -63,11 +70,13 @@ enum GymSync {
             let log = LogImporter.export([session], store: store)
             let key = String(log.prefix(10))
             if remote[key]?.log == log { continue }
+            var lines = log.components(separatedBy: "\n")
+            let header = lines.removeFirst().components(separatedBy: " · ")
             let props: [String: Any] = [
-                "Name": NotionAPI.title(log.components(separatedBy: "\n").first ?? key),
+                "Split": NotionAPI.title(header.count > 1 ? header[1] : "Workout"),
                 "Date": NotionAPI.date(session.date, time: false),
                 "Gym": NotionAPI.select(session.gymName),
-                "Log": NotionAPI.richText(log),
+                "Exercises": NotionAPI.richText(lines.joined(separator: "\n")),
             ]
             if let page = remote[key]?.page {
                 try? await api.update(page: page, properties: props)

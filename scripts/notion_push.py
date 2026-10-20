@@ -122,16 +122,17 @@ def push_gyms(path):
 
 def push_gym_log(path):
     db = cfg("GYMLOG_DB")
-    existing = {plain(p, "Log")[:10]: p["id"] for p in rows(db)}
+    existing = {(p["properties"]["Date"]["date"] or {}).get("start", "")[:10]: p["id"] for p in rows(db)}
     days = [d.strip() for d in open(path).read().split("\n\n") if d.strip()]
     counts = {"created": 0, "updated": 0}
     for day in days:
-        header = day.split("\n")[0]
+        header, _, body = day.partition("\n")
         parts = [p.strip() for p in header.split("·")]
-        props = {"Name": text(header, "title"), "Date": {"date": {"start": header[:10]}}, "Log": text(day)}
+        props = {"Split": text(parts[1] if len(parts) > 1 else "Workout", "title"),
+                 "Date": {"date": {"start": parts[0]}}, "Exercises": text(body)}
         if len(parts) >= 3:
             props["Gym"] = {"select": {"name": parts[2]}}
-        counts[upsert(db, existing, header[:10], props)] += 1
+        counts[upsert(db, existing, parts[0], props)] += 1
     print(f"gym log: {counts['created']} created, {counts['updated']} updated")
 
 

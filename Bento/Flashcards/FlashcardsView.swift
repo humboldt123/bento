@@ -96,6 +96,8 @@ private struct DeckCard: View {
 
 struct DeckView: View {
     let deck: Deck
+    /// Study and reel order (shared with the reel's shuffle button)
+    @AppStorage("shuffleCards") private var shuffle = false
     @State private var studying = false
     @State private var reeling = false
     @State private var assembling: [AssembleQuiz]?
@@ -122,6 +124,10 @@ struct DeckView: View {
                 } label: {
                     Label("Reel", systemImage: "rectangle.portrait.on.rectangle.portrait.angled")
                 }
+                Toggle(isOn: $shuffle) {
+                    Label("Shuffle", systemImage: "shuffle")
+                }
+                .tint(.primary)
                 if !deck.quizzes.isEmpty {
                     Button {
                         assembling = deck.quizzes.shuffled()
@@ -206,6 +212,7 @@ struct StudySession: View {
     let deck: Deck
     @Environment(\.dismiss) private var dismiss
     @State private var queue: [Flashcard] = []
+    @AppStorage("shuffleCards") private var shuffle = false
     @State private var flipped = false
     /// An interactive card has been answered (it records itself)
     @State private var answered = false
@@ -283,7 +290,7 @@ struct StudySession: View {
             }
         }
         .fontDesign(.rounded)
-        .onAppear { queue = progress.due(in: deck) }
+        .onAppear { queue = shuffle ? progress.due(in: deck).shuffled() : progress.due(in: deck) }
     }
 
     private func answerButton(_ title: String, symbol: String, correct: Bool, card: Flashcard) -> some View {

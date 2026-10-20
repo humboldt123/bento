@@ -10,6 +10,8 @@ struct ReelView: View {
     let decks: [Deck]
 
     @AppStorage("reelMode") private var mode: Mode = .study
+    /// Shared with the deck screen's Shuffle toggle
+    @AppStorage("shuffleCards") private var shuffle = false
     @State private var cards: [Flashcard] = []
 
     @Environment(\.dismiss) private var dismiss
@@ -18,15 +20,17 @@ struct ReelView: View {
     @State private var current: String?
     private let progress = StudyProgress.shared
 
-    /// Study: due first. Learn: cards you've never seen first (in deck order, so topics build up).
-    static func feed(from decks: [Deck], mode: Mode) -> [Flashcard] {
+    /// Study: due first. Learn: cards you've never seen first (in deck order, so topics build up,
+    /// unless shuffle is on).
+    static func feed(from decks: [Deck], mode: Mode, shuffle: Bool = false) -> [Flashcard] {
         let progress = StudyProgress.shared
         let all = decks.flatMap(\.cards)
         switch mode {
         case .study:
             return all.filter { progress.isDue($0) }.shuffled() + all.filter { !progress.isDue($0) }.shuffled()
         case .learn:
-            return all.filter(progress.isNew) + all.filter { !progress.isNew($0) }
+            let new = all.filter(progress.isNew), seen = all.filter { !progress.isNew($0) }
+            return shuffle ? new.shuffled() + seen.shuffled() : new + seen
         }
     }
 
@@ -50,6 +54,7 @@ struct ReelView: View {
         .fontDesign(.rounded)
         .onAppear { reload() }
         .onChange(of: mode) { _, _ in reload() }
+        .onChange(of: shuffle) { _, _ in reload() }
     }
 
     private var header: some View {
@@ -72,6 +77,14 @@ struct ReelView: View {
             Spacer()
             let done = graded.values.count
             let right = graded.values.filter { $0 }.count
+            Button {
+                shuffle.toggle()
+            } label: {
+                Image(systemName: "shuffle")
+                    .font(.subheadline.bold())
+                    .foregroundStyle(shuffle ? Color.primary : Color.secondary.opacity(0.5))
+            }
+            .accessibilityLabel(shuffle ? "Shuffle on" : "Shuffle off")
             Text("\(right)/\(done)")
                 .font(.subheadline.monospacedDigit().bold())
                 .frame(minWidth: 40)
@@ -81,7 +94,7 @@ struct ReelView: View {
     }
 
     private func reload() {
-        cards = Self.feed(from: decks, mode: mode)
+        cards = Self.feed(from: decks, mode: mode, shuffle: shuffle)
         flipped = []
         current = cards.first?.id
     }

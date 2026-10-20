@@ -3,7 +3,7 @@ import SwiftData
 
 /// A tool on the Bento home screen
 enum BentoTool: String, CaseIterable, Identifiable {
-    case gym, todo, flashcards, downloader, files, edit, compress, gif
+    case gym, todo, flashcards, downloader, files, paint, edit, compress, gif
 
     var id: String { rawValue }
 
@@ -14,6 +14,7 @@ enum BentoTool: String, CaseIterable, Identifiable {
         case .flashcards: "flashcards"
         case .downloader: "downloader"
         case .files: "files"
+        case .paint: "paint"
         case .edit: "edit"
         case .compress: "compress"
         case .gif: "to gif"
@@ -27,6 +28,7 @@ enum BentoTool: String, CaseIterable, Identifiable {
         case .flashcards: "rectangle.on.rectangle.angled"
         case .downloader: "arrow.down.circle.fill"
         case .files: "folder.fill"
+        case .paint: "paintbrush.pointed"
         case .edit: "scissors"
         case .compress: "arrow.down.right.and.arrow.up.left"
         case .gif: "photo.stack"
@@ -69,11 +71,13 @@ struct HomeMenuView: View {
                 HStack(spacing: 14) {
                     Button { openTool = .files } label: { FilesCard() }
                         .buttonStyle(BentoPressStyle())
-                    Button { openTool = .edit } label: { SmallToolCard(tool: .edit, subtitle: "trim, crop, stitch", height: 110) }
+                    Button { openTool = .paint } label: { SmallToolCard(tool: .paint, subtitle: "draw, select, paste", height: 110) }
                         .buttonStyle(BentoPressStyle())
                 }
-                HStack(spacing: 14) {
-                    Button { openTool = .compress } label: { SmallToolCard(tool: .compress, subtitle: "shrink a video", height: 110) }
+                HStack(spacing: 12) {
+                    Button { openTool = .edit } label: { SmallToolCard(tool: .edit, subtitle: "trim, crop, stitch", height: 110) }
+                        .buttonStyle(BentoPressStyle())
+                    Button { openTool = .compress } label: { SmallToolCard(tool: .compress, subtitle: "shrink", height: 110) }
                         .buttonStyle(BentoPressStyle())
                     Button { openTool = .gif } label: { SmallToolCard(tool: .gif, subtitle: "video → gif", height: 110) }
                         .buttonStyle(BentoPressStyle())
@@ -99,6 +103,7 @@ struct HomeMenuView: View {
                 case .flashcards: FlashcardsView()
                 case .downloader: DownloaderView()
                 case .files: FilesView()
+                case .paint: PaintView()
                 case .edit: EditView()
                 case .compress: CompressView()
                 case .gif: GifView()
@@ -313,7 +318,7 @@ private struct FilesCard: View {
             Spacer(minLength: 0)
             Text(BentoTool.files.title)
                 .font(.headline)
-            Text(count.map { $0 == 0 ? "downloads land here" : "\($0) downloads" } ?? " ")
+            Text(count.map { $0 == 0 ? "downloads land here" : $0 == 1 ? "1 download" : "\($0) downloads" } ?? " ")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

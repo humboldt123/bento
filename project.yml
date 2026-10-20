@@ -53,6 +53,9 @@ targets:
         NSPhotoLibraryAddUsageDescription: Bento saves downloaded videos and photos to your library.
         # Only standard HTTPS, so TestFlight uploads skip the export-compliance question
         ITSAppUsesNonExemptEncryption: false
+        # "Bento" alone is taken on the App Store (error 90129); matches the App Store Connect name
+        CFBundleDisplayName: Bento Toolbox
+        CFBundleName: Bento Toolbox
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
@@ -89,7 +92,8 @@ targets:
     info:
       path: Bento/Share/Info.plist
       properties:
-        CFBundleDisplayName: Bento
+        CFBundleDisplayName: Bento Toolbox
+        CFBundleName: Bento Toolbox
         AppGroup: group.$(BUNDLE_ID_PREFIX).bento
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)

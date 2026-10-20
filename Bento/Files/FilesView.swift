@@ -3,7 +3,7 @@ import QuickLook
 import QuickLookThumbnailing
 import UniformTypeIdentifiers
 
-/// Tool root: "On iPhone" (the app's Documents, default) or "Cloud" (a folder you picked)
+/// Tool root: "On iPhone" (Bento's Downloads, default) or "Cloud" (a folder you picked)
 struct FilesView: View {
     @AppStorage("filesLocation") private var location = "iphone"
     @State private var pickingCloud = false
@@ -28,7 +28,7 @@ struct FilesView: View {
                         connectCloud
                     }
                 } else {
-                    FileBrowser(folder: BentoStorage.documents, title: "files")
+                    FileBrowser(folder: BentoStorage.downloads, title: "files")
                 }
             }
             .background(Color.bentoPaper.ignoresSafeArea())
@@ -58,7 +58,7 @@ struct FilesView: View {
                 .font(.system(size: 44))
             Text("Pick a cloud folder")
                 .font(.title3.bold())
-            Text("Choose any folder in iCloud Drive, Google Drive, OneDrive… Bento remembers it and shows it here. Files stay on your iPhone unless you move them.")
+            Text("Choose any folder in iCloud Drive, Google Drive, OneDrive… Bento remembers it and shows what's inside here, without copying it to your iPhone. You can move files between this phone and that folder.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

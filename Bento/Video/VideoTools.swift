@@ -188,7 +188,7 @@ struct GifView: View {
         defer { working = false }
         do {
             let out = VideoIO.output(named: source, suffix: nil, ext: "gif")
-            try await VideoIO.gif(from: asset, range: range, fps: fps, width: width, to: out) { progress = $0 }
+            try await GifMaker.make(from: asset, range: range, fps: fps, width: width, to: out) { progress = $0 }
             result = out
         } catch { self.error = error.localizedDescription }
     }
@@ -216,7 +216,7 @@ private struct VideoToolScreen<Controls: View>: View {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack(spacing: 10) {
                         PhotosPicker(selection: $photoItem, matching: .videos) {
-                            Label("Photos", systemImage: "photo.on.rectangle")
+                            Label("Media", systemImage: "photo.on.rectangle")
                         }
                         .buttonStyle(BentoButtonStyle())
                         Button {
@@ -275,33 +275,47 @@ private struct VideoToolScreen<Controls: View>: View {
     }
 }
 
-/// A finished file: preview, save to Photos, share (compact, shown right under the file name)
-private struct ResultCard: View {
+/// A finished file: preview, save to Photos, share (compact, shown right under the file name).
+/// Saving to Photos moves it out of Bento's Downloads, so it lives in one place.
+struct ResultCard: View {
     let url: URL
+    @State private var current: URL?
     @State private var preview: URL?
     @State private var saved: String?
+
+    private var file: URL { current ?? url }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.bentoActivity)
-                Text(url.lastPathComponent).font(.subheadline.bold()).lineLimit(1).truncationMode(.middle)
+                Text(file.lastPathComponent).font(.subheadline.bold()).lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 0)
-                if let size = VideoIO.size(url) {
+                if let size = VideoIO.size(file) {
                     Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
+            Text(saved == "Saved ✓" ? "In your camera roll" : "In Files › Downloads")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
             HStack(spacing: 8) {
-                Button("Preview") { preview = url }
+                Button("Preview") { preview = file }
                 Button(saved ?? "Save to Photos") {
                     Task {
-                        do { try await PhotoSaver.save(url); saved = "Saved ✓" } catch { saved = "Couldn't save" }
+                        do {
+                            try await PhotoSaver.save(file)
+                            // Keep a temp copy so Preview/Share still work, but drop it from Downloads
+                            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(file.lastPathComponent)
+                            try? FileManager.default.removeItem(at: tmp)
+                            if (try? FileManager.default.moveItem(at: file, to: tmp)) != nil { current = tmp }
+                            saved = "Saved ✓"
+                        } catch { saved = "Couldn't save" }
                     }
                 }
                 .disabled(saved == "Saved ✓")
-                ShareLink(item: url) { Image(systemName: "square.and.arrow.up") }
+                ShareLink(item: file) { Image(systemName: "square.and.arrow.up") }
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
@@ -448,34 +462,6 @@ enum VideoIO {
         return await withCheckedContinuation { done in
             session.estimateOutputFileLength { bytes, _ in done.resume(returning: bytes > 0 ? bytes : nil) }
         }
-    }
-
-    static func gif(from asset: AVAsset, range: ClosedRange<Double>, fps: Int, width: Int, to url: URL,
-                    progress: @escaping @MainActor (Double) -> Void) async throws {
-        let step = 1.0 / Double(fps)
-        let times = stride(from: range.lowerBound, to: range.upperBound, by: step).map { CMTime(seconds: $0, preferredTimescale: 600) }
-        guard !times.isEmpty,
-              let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.gif.identifier as CFString, times.count, nil) else {
-            throw CocoaError(.fileWriteUnknown)
-        }
-        CGImageDestinationSetProperties(dest, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary)
-        let frameProps = [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: step]] as CFDictionary
-
-        let generator = AVAssetImageGenerator(asset: asset)
-        generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: width, height: width * 4)
-        let tolerance = CMTime(seconds: step / 2, preferredTimescale: 600)
-        generator.requestedTimeToleranceBefore = tolerance
-        generator.requestedTimeToleranceAfter = tolerance
-
-        var done = 0
-        for await result in generator.images(for: times) {
-            if let image = try? result.image { CGImageDestinationAddImage(dest, image, frameProps) }
-            done += 1
-            let fraction = Double(done) / Double(times.count)
-            await progress(fraction)
-        }
-        guard CGImageDestinationFinalize(dest) else { throw CocoaError(.fileWriteUnknown) }
     }
 }
 

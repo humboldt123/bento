@@ -25,6 +25,9 @@ enum BentoStorage {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
 
+    /// Settings both the app and the share extension read
+    static var groupDefaults: UserDefaults { UserDefaults(suiteName: appGroup) ?? .standard }
+
     static var downloads: URL {
         let url = documents.appendingPathComponent("Downloads", isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -58,7 +61,8 @@ enum BentoStorage {
 // MARK: - Resolving links
 
 struct ResolvedMedia: Sendable {
-    enum Kind: Sendable { case video, photo, file }
+    /// gif: X's "GIFs", which are silent MP4s we can turn back into real GIFs
+    enum Kind: Sendable { case video, gif, photo, file }
     let url: URL
     let kind: Kind
     let filename: String
@@ -140,7 +144,8 @@ enum MediaResolver {
                     .filter { ($0["content_type"] as? String) == "video/mp4" }
                     .max { ($0["bitrate"] as? Double ?? 0) < ($1["bitrate"] as? Double ?? 0) }
                 guard let s = best?["url"] as? String, let u = URL(string: s) else { return nil }
-                return ResolvedMedia(url: u, kind: .video, filename: "\(user)-\(id)\(suffix).mp4")
+                let kind: ResolvedMedia.Kind = m["type"] as? String == "animated_gif" ? .gif : .video
+                return ResolvedMedia(url: u, kind: kind, filename: "\(user)-\(id)\(suffix).mp4")
             case "photo":
                 guard let s = m["media_url_https"] as? String,
                       var c = URLComponents(string: s) else { return nil }

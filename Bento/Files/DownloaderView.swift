@@ -18,7 +18,8 @@ final class DownloadJob: Identifiable {
 
     init(link: String) { self.link = link }
 
-    /// cloudFolder: also move finished files there (nil = keep on iPhone)
+    /// Each file ends up in exactly one place: Photos (photos and videos, when asked), else the
+    /// cloud folder if given, else Bento's Downloads
     func run(saveToPhotos: Bool, cloudFolder: URL? = nil) async {
         do {
             let media = try await MediaResolver.resolve(link)
@@ -26,13 +27,20 @@ final class DownloadJob: Identifiable {
             for (i, item) in media.enumerated() {
                 let base = Double(i) / Double(media.count)
                 state = .downloading(base)
-                let file = try await FileDownloader.download(item, to: BentoStorage.downloads) { fraction in
+                var file = try await FileDownloader.download(item, to: BentoStorage.downloads) { fraction in
                     Task { @MainActor in
                         self.state = .downloading(base + fraction / Double(media.count))
                     }
                 }
+                if item.kind == .gif, GifMaker.convertXGifs {
+                    file = (try? await GifMaker.convertDownload(file)) ?? file
+                }
                 if saveToPhotos, PhotoSaver.canSave(file) {
-                    do { try await PhotoSaver.save(file) } catch { saved = false }
+                    do {
+                        try await PhotoSaver.save(file)
+                        try? FileManager.default.removeItem(at: file)  // it lives in Photos now
+                        continue
+                    } catch { saved = false }
                 }
                 if let cloudFolder {
                     try CloudFolder.transfer(file, to: cloudFolder, move: true)
@@ -49,8 +57,10 @@ final class DownloadJob: Identifiable {
 }
 
 struct DownloaderView: View {
-    @AppStorage("downloaderSaveToPhotos") private var saveToPhotos = true
-    @AppStorage("downloaderDestination") private var destination = "iphone"
+    /// "photos", "iphone" (Bento's Downloads) or "cloud"
+    @AppStorage("downloaderSaveTarget") private var saveTarget = "photos"
+    /// X serves GIFs as silent MP4s; convert them back (shared with the share extension)
+    @State private var convertGifs = GifMaker.convertXGifs
     private let cloud = CloudFolder.shared
     @State private var link = ""
     @State private var jobs: [DownloadJob] = []
@@ -112,17 +122,19 @@ struct DownloaderView: View {
             }
             .buttonStyle(BentoButtonStyle())
 
-            Toggle("Save to Photos too", isOn: $saveToPhotos)
+            Picker("Save to", selection: $saveTarget) {
+                Text("Photos").tag("photos")
+                Text("Files").tag("iphone")
+                if cloud.url != nil { Text(cloud.name).tag("cloud") }
+            }
+            .pickerStyle(.segmented)
+            Text(saveTarget == "photos" ? "Photos and videos go to your camera roll; anything else lands in Files."
+                 : "Kept in Bento's files, not your camera roll.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Toggle("Turn X GIFs into real GIFs", isOn: Binding(get: { convertGifs }, set: { convertGifs = $0; GifMaker.convertXGifs = $0 }))
                 .font(.subheadline)
                 .tint(.primary)
-
-            if cloud.url != nil {
-                Picker("Keep the file on", selection: $destination) {
-                    Text("iPhone").tag("iphone")
-                    Text(cloud.name).tag("cloud")
-                }
-                .pickerStyle(.segmented)
-            }
         }
     }
 
@@ -188,7 +200,7 @@ struct DownloaderView: View {
         jobs.insert(job, at: 0)
         link = ""
         Task {
-            await job.run(saveToPhotos: saveToPhotos, cloudFolder: destination == "cloud" ? cloud.url : nil)
+            await job.run(saveToPhotos: saveTarget == "photos", cloudFolder: saveTarget == "cloud" ? cloud.url : nil)
             await loadRecent()
         }
     }

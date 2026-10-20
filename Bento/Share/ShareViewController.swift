@@ -55,14 +55,21 @@ final class ShareModel {
             for (i, item) in media.enumerated() {
                 let base = Double(i) / Double(media.count)
                 state = .progress(base)
-                let file = try await FileDownloader.download(item, to: BentoStorage.inbox) { fraction in
+                var file = try await FileDownloader.download(item, to: BentoStorage.inbox) { fraction in
                     Task { @MainActor in self.state = .progress(base + fraction / Double(media.count)) }
                 }
+                if item.kind == .gif, GifMaker.convertXGifs {
+                    state = .working("Making a GIF…")
+                    file = (try? await GifMaker.convertDownload(file)) ?? file
+                }
                 if PhotoSaver.canSave(file) {
-                    do { try await PhotoSaver.save(file) } catch { savedToPhotos = false }
+                    do {
+                        try await PhotoSaver.save(file)
+                        try? FileManager.default.removeItem(at: file)  // in Photos now, not also in Files
+                    } catch { savedToPhotos = false }
                 }
             }
-            let what = media.count == 1 ? (media[0].kind == .video ? "Video" : "Photo") : "\(media.count) files"
+            let what = media.count == 1 ? (media[0].kind == .video ? "Video" : media[0].kind == .gif ? "GIF" : "Photo") : "\(media.count) files"
             state = .done(savedToPhotos ? "\(what) saved to Photos" : "\(what) saved to Bento Files")
         } catch {
             state = .failed(error.localizedDescription)

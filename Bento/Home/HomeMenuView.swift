@@ -3,7 +3,7 @@ import SwiftData
 
 /// A tool on the Bento home screen
 enum BentoTool: String, CaseIterable, Identifiable {
-    case gym, todo, flashcards, downloader, files, trim, compress, gif
+    case gym, todo, flashcards, downloader, files, edit, compress, gif
 
     var id: String { rawValue }
 
@@ -14,7 +14,7 @@ enum BentoTool: String, CaseIterable, Identifiable {
         case .flashcards: "flashcards"
         case .downloader: "downloader"
         case .files: "files"
-        case .trim: "trim"
+        case .edit: "edit"
         case .compress: "compress"
         case .gif: "to gif"
         }
@@ -27,7 +27,7 @@ enum BentoTool: String, CaseIterable, Identifiable {
         case .flashcards: "rectangle.on.rectangle.angled"
         case .downloader: "arrow.down.circle.fill"
         case .files: "folder.fill"
-        case .trim: "scissors"
+        case .edit: "scissors"
         case .compress: "arrow.down.right.and.arrow.up.left"
         case .gif: "photo.stack"
         }
@@ -69,7 +69,7 @@ struct HomeMenuView: View {
                 HStack(spacing: 14) {
                     Button { openTool = .files } label: { FilesCard() }
                         .buttonStyle(BentoPressStyle())
-                    Button { openTool = .trim } label: { SmallToolCard(tool: .trim, subtitle: "cut a clip", height: 110) }
+                    Button { openTool = .edit } label: { SmallToolCard(tool: .edit, subtitle: "trim, crop, stitch", height: 110) }
                         .buttonStyle(BentoPressStyle())
                 }
                 HStack(spacing: 14) {
@@ -99,7 +99,7 @@ struct HomeMenuView: View {
                 case .flashcards: FlashcardsView()
                 case .downloader: DownloaderView()
                 case .files: FilesView()
-                case .trim: TrimView()
+                case .edit: EditView()
                 case .compress: CompressView()
                 case .gif: GifView()
                 }

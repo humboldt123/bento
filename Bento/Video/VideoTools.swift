@@ -4,46 +4,8 @@ import PhotosUI
 import ImageIO
 import UniformTypeIdentifiers
 
-// Quick video tools: trim, compress, and video -> GIF. Everything runs on device (AVFoundation);
+// Quick video tools: compress and video -> GIF (the editor is in EditView.swift). Everything runs on device (AVFoundation);
 // results land in Bento's Downloads folder and can be saved to Photos or shared.
-
-// MARK: - Trim
-
-struct TrimView: View {
-    @State private var source: URL?
-    @State private var range: ClosedRange<Double> = 0...1
-    @State private var result: URL?
-    @State private var working = false
-    @State private var error: String?
-
-    var body: some View {
-        VideoToolScreen(title: "trim", source: $source, result: result, working: working, error: error) { asset, duration in
-            PreviewPlayer(url: source, seek: range.lowerBound)
-            RangeBar(range: $range, duration: duration)
-            Button {
-                Task { await run(asset) }
-            } label: {
-                Label("Trim to \(clock(range.upperBound - range.lowerBound))", systemImage: "scissors")
-            }
-            .buttonStyle(BentoButtonStyle())
-            .disabled(working)
-        }
-        .onChange(of: source) { result = nil; range = 0...1 }
-    }
-
-    private func run(_ asset: AVURLAsset) async {
-        working = true; error = nil
-        defer { working = false }
-        do {
-            let ext = source?.pathExtension.lowercased() == "mp4" ? "mp4" : "mov"
-            let out = VideoIO.output(named: source, suffix: "trim", ext: ext)
-            let range = CMTimeRange(start: CMTime(seconds: range.lowerBound, preferredTimescale: 600),
-                                    end: CMTime(seconds: range.upperBound, preferredTimescale: 600))
-            try await VideoIO.export(asset, preset: AVAssetExportPresetPassthrough, to: out, type: ext == "mp4" ? .mp4 : .mov, range: range)
-            result = out
-        } catch { self.error = error.localizedDescription }
-    }
-}
 
 // MARK: - Compress
 
@@ -238,7 +200,7 @@ private struct VideoToolScreen<Controls: View>: View {
                         Text("Pick a video to start.")
                             .foregroundStyle(.secondary)
                     }
-                    if working && title == "trim" { ProgressView() }
+                    if working && title == "compress" { ProgressView() }
                     if let error { Text(error).foregroundStyle(.red).font(.callout) }
                 }
                 .padding(20)
@@ -328,7 +290,7 @@ struct ResultCard: View {
 }
 
 /// Plays the picked video, jumping to the start of the selected range when it changes
-private struct PreviewPlayer: View {
+struct PreviewPlayer: View {
     let url: URL?
     let seek: Double
     @State private var player = AVPlayer()
@@ -348,7 +310,7 @@ private struct PreviewPlayer: View {
 }
 
 /// Two handles over a track; range is in seconds
-private struct RangeBar: View {
+struct RangeBar: View {
     @Binding var range: ClosedRange<Double>
     let duration: Double
     var maxLength: Double = .infinity
@@ -396,7 +358,7 @@ private struct RangeBar: View {
     }
 }
 
-private func clock(_ seconds: Double) -> String {
+func clock(_ seconds: Double) -> String {
     guard seconds.isFinite else { return "0:00" }
     let s = max(0, seconds)
     return String(format: "%d:%04.1f", Int(s) / 60, s.truncatingRemainder(dividingBy: 60))
@@ -405,7 +367,7 @@ private func clock(_ seconds: Double) -> String {
 // MARK: - IO
 
 /// A video from Photos, copied somewhere we can read it
-private struct PickedMovie: Transferable {
+struct PickedMovie: Transferable {
     let url: URL
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(contentType: .movie) { SentTransferredFile($0.url) } importing: { received in

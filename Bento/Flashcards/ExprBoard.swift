@@ -103,7 +103,7 @@ struct ExprBoard: UIViewRepresentable {
     :root { color-scheme: light dark; --ink: #000; --card: #fff; --muted: #888; }
     @media (prefers-color-scheme: dark) { :root { --ink: #fff; --card: #1c1c1e; } }
     html, body { margin: 0; background: transparent; -webkit-user-select: none; -webkit-touch-callout: none; }
-    body { font: 16px ui-rounded, -apple-system; color: var(--ink); padding: 4px 4px 8px; display: flow-root; }
+    body { font: 16px ui-rounded, -apple-system, "Apple Color Emoji"; color: var(--ink); padding: 4px 4px 8px; display: flow-root; }
     .card { background: var(--card); border: 1.5px solid var(--ink); border-radius: 20px; box-shadow: 3px 3px 0 var(--ink);
             padding: 18px 14px; min-height: 64px; display: flex; align-items: center; justify-content: center;
             overflow-x: auto; transition: background .15s; }

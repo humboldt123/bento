@@ -34,7 +34,7 @@ enum MathHTML {
         :root { color-scheme: light dark; }
         html, body { margin: 0; padding: 0; background: transparent; height: auto; }
         body { display: flow-root; }
-        body { font: \(bold ? "700" : "400") \(Int(size))px ui-rounded, -apple-system, system-ui; line-height: 1.4;
+        body { font: \(bold ? "700" : "400") \(Int(size))px ui-rounded, -apple-system, system-ui, "Apple Color Emoji"; line-height: 1.4;
                -webkit-text-size-adjust: none; word-wrap: break-word; }
         p { margin: 0 0 0.6em; } p:last-child { margin-bottom: 0; }
         code { font: 0.88em ui-monospace, Menlo; background: rgba(127,127,127,.15); padding: 1px 4px; border-radius: 4px; }

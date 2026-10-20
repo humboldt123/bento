@@ -82,7 +82,7 @@ struct CardEngine: UIViewRepresentable {
     :root { color-scheme: light dark; --ink: #111; --card: #fff; --muted: #8a8a8a; --ok: #22ad54; --bad: #ff3b30; --sel: #2f7bf6; }
     @media (prefers-color-scheme: dark) { :root { --ink: #f2f2f2; --card: #1c1c1e; } }
     html, body { margin: 0; background: transparent; -webkit-user-select: none; -webkit-touch-callout: none; }
-    body { font: 17px/1.4 ui-rounded, -apple-system; color: var(--ink); padding: 2px 4px 8px; display: flow-root; }
+    body { font: 17px/1.4 ui-rounded, -apple-system, "Apple Color Emoji"; color: var(--ink); padding: 2px 4px 8px; display: flow-root; }
     .prompt { font-weight: 700; font-size: 20px; margin: 0 0 14px; }
     .hint { color: var(--muted); font-size: 13px; margin: -6px 0 12px; }
     .chip, .opt, .line, .bucket, .cell.blank, .slot {
@@ -117,7 +117,7 @@ struct CardEngine: UIViewRepresentable {
     td { vertical-align: top; padding: 6px; }
     .cell.blank { min-height: 26px; }
     .cell.blank.empty::after { content: "tap to fill"; color: var(--muted); font-size: 12px; }
-    .check { margin-top: 8px; width: 100%; padding: 13px; font: 700 17px ui-rounded, -apple-system; color: var(--card);
+    .check { margin-top: 8px; width: 100%; padding: 13px; font: 700 17px ui-rounded, -apple-system, "Apple Color Emoji"; color: var(--card);
              background: var(--ink); border: 1.5px solid var(--ink); border-radius: 14px; box-shadow: 3px 3px 0 var(--ink); }
     .check:disabled { opacity: .3; }
     .why { margin-top: 14px; padding: 12px 14px; border-radius: 14px; background: rgba(127,127,127,.12); font-size: 15px; }

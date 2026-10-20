@@ -33,7 +33,8 @@ struct FlashcardsView: View {
 
                     ForEach(store.decks) { deck in
                         NavigationLink(value: deck.id) {
-                            DeckCard(deck: deck, due: progress.due(in: deck).count, mastery: progress.mastery(of: deck))
+                            DeckCard(deck: deck, summary: StudyProgress.summary(due: progress.reviewsDue(in: deck), new: progress.newCount(in: deck)),
+                                     mastery: progress.mastery(of: deck))
                         }
                         .buttonStyle(BentoPressStyle())
                     }
@@ -60,7 +61,7 @@ struct FlashcardsView: View {
 
 private struct DeckCard: View {
     let deck: Deck
-    let due: Int
+    let summary: String
     let mastery: Double
 
     var body: some View {
@@ -71,7 +72,7 @@ private struct DeckCard: View {
                     .frame(width: 36, height: 36)
                     .overlay(Circle().stroke(Color.primary, lineWidth: 1.5))
                 Spacer()
-                Text(due == 0 ? "all caught up" : "\(due) due")
+                Text(summary)
                     .font(.caption.bold())
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)

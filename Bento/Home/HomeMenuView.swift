@@ -3,7 +3,7 @@ import SwiftData
 
 /// A tool on the Bento home screen
 enum BentoTool: String, CaseIterable, Identifiable {
-    case gym, todo, flashcards, downloader, files
+    case gym, todo, flashcards, downloader, files, trim, compress, gif
 
     var id: String { rawValue }
 
@@ -14,6 +14,9 @@ enum BentoTool: String, CaseIterable, Identifiable {
         case .flashcards: "flashcards"
         case .downloader: "downloader"
         case .files: "files"
+        case .trim: "trim"
+        case .compress: "compress"
+        case .gif: "to gif"
         }
     }
 
@@ -24,12 +27,15 @@ enum BentoTool: String, CaseIterable, Identifiable {
         case .flashcards: "rectangle.on.rectangle.angled"
         case .downloader: "arrow.down.circle.fill"
         case .files: "folder.fill"
+        case .trim: "scissors"
+        case .compress: "arrow.down.right.and.arrow.up.left"
+        case .gif: "photo.stack"
         }
     }
 
     var isReady: Bool {
         switch self {
-        case .gym, .todo, .flashcards, .downloader, .files: true
+        default: true
         }
     }
 }
@@ -60,8 +66,18 @@ struct HomeMenuView: View {
                     }
                 }
 
-                Button { openTool = .files } label: { FilesCard() }
-                    .buttonStyle(BentoPressStyle())
+                HStack(spacing: 14) {
+                    Button { openTool = .files } label: { FilesCard() }
+                        .buttonStyle(BentoPressStyle())
+                    Button { openTool = .trim } label: { SmallToolCard(tool: .trim, subtitle: "cut a clip", height: 110) }
+                        .buttonStyle(BentoPressStyle())
+                }
+                HStack(spacing: 14) {
+                    Button { openTool = .compress } label: { SmallToolCard(tool: .compress, subtitle: "shrink a video", height: 110) }
+                        .buttonStyle(BentoPressStyle())
+                    Button { openTool = .gif } label: { SmallToolCard(tool: .gif, subtitle: "video → gif", height: 110) }
+                        .buttonStyle(BentoPressStyle())
+                }
             }
             .padding(20)
         }
@@ -83,6 +99,9 @@ struct HomeMenuView: View {
                 case .flashcards: FlashcardsView()
                 case .downloader: DownloaderView()
                 case .files: FilesView()
+                case .trim: TrimView()
+                case .compress: CompressView()
+                case .gif: GifView()
                 }
             }
             .fontDesign(.rounded)
@@ -245,13 +264,15 @@ private struct FlashcardsCard: View {
     private let progress = StudyProgress.shared
 
     var body: some View {
-        let due = DeckStore.shared.decks.reduce(0) { $0 + progress.due(in: $1).count }
+        let decks = DeckStore.shared.decks
+        let due = decks.reduce(0) { $0 + progress.reviewsDue(in: $1) }
+        let new = decks.reduce(0) { $0 + progress.newCount(in: $1) }
         VStack(alignment: .leading, spacing: 6) {
             BentoIcon(symbol: BentoTool.flashcards.symbol)
             Spacer(minLength: 0)
             Text(BentoTool.flashcards.title)
                 .font(.headline)
-            Text(due == 0 ? "all caught up" : "\(due) due")
+            Text(decks.isEmpty ? "decks in notion" : StudyProgress.summary(due: due, new: new))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -264,6 +285,7 @@ private struct FlashcardsCard: View {
 private struct SmallToolCard: View {
     let tool: BentoTool
     let subtitle: String
+    var height: CGFloat = 140
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -276,44 +298,31 @@ private struct SmallToolCard: View {
                 .foregroundStyle(.secondary)
         }
         .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 140, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: height, alignment: .topLeading)
         .bentoCard()
     }
 }
 
-/// Wide card: newest downloads as thumbnails
+/// Small card: how many downloads there are
 private struct FilesCard: View {
-    @State private var recent: [FileItem] = []
+    @State private var count: Int?
 
     var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                BentoIcon(symbol: BentoTool.files.symbol)
-                Spacer(minLength: 0)
-                Text(BentoTool.files.title)
-                    .font(.headline)
-                Text(recent.isEmpty ? "downloads land here" : "\(recent.count) downloads")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            HStack(spacing: -18) {
-                ForEach(recent.prefix(3)) { item in
-                    Thumbnail(item: item)
-                        .frame(width: 54, height: 72)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.primary, lineWidth: 1.2))
-                }
-            }
+        VStack(alignment: .leading, spacing: 6) {
+            BentoIcon(symbol: BentoTool.files.symbol)
+            Spacer(minLength: 0)
+            Text(BentoTool.files.title)
+                .font(.headline)
+            Text(count.map { $0 == 0 ? "downloads land here" : "\($0) downloads" } ?? " ")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
         .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 110, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: 110, alignment: .topLeading)
         .bentoCard()
         .task {
             BentoStorage.collectInbox()
-            recent = await FileItem.list(BentoStorage.downloads)
-                .filter { !$0.isFolder }
-                .sorted { $0.modified > $1.modified }
+            count = await FileItem.list(BentoStorage.downloads).filter { !$0.isFolder }.count
         }
     }
 }

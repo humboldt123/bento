@@ -21,6 +21,7 @@ targets:
       - path: Bento/Todo
       - path: Bento/Flashcards
       - path: Bento/Files
+      - path: Bento/Video
       - path: Bento/Shared
       - path: Bento/Assets.xcassets
       - path: Bento/Resources/exercises.json

@@ -123,7 +123,8 @@ enum NotionHTML {
         <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
         <style>
         :root { color-scheme: light dark; }
-        body { font: -apple-system-body; margin: 0; line-height: 1.5; word-wrap: break-word; }
+        body { font: -apple-system-body; font-family: -apple-system, system-ui, "Apple Color Emoji", sans-serif;
+               margin: 0; line-height: 1.5; word-wrap: break-word; }
         h1, h2, h3 { line-height: 1.25; margin: 1.1em 0 0.4em; }
         p { margin: 0.4em 0; }
         code { font: 0.9em ui-monospace, Menlo; background: rgba(127,127,127,.15); padding: 1px 4px; border-radius: 4px; }

@@ -79,7 +79,7 @@ targets:
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: true
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: true
         TARGETED_DEVICE_FAMILY: "1"  # iPhone only
-        INFOPLIST_KEY_CFBundleDisplayName: "Bento"
+        INFOPLIST_KEY_CFBundleDisplayName: "Bento Toolbox"
         ASSETCATALOG_COMPILER_APPICON_NAME: "AppIcon"
         SWIFT_STRICT_CONCURRENCY: minimal
 

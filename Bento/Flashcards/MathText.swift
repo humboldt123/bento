@@ -42,6 +42,17 @@ enum MathHTML {
         .katex-display { margin: 0.4em 0; overflow-x: auto; overflow-y: hidden; }
         </style></head><body>\(body(text))
         <script>
+        // Shrink wide display equations to fit (down to 60%), then let them scroll
+        function fit() {
+          document.querySelectorAll(".katex-display").forEach(function (d) {
+            var k = d.querySelector(".katex"); if (!k) return;
+            k.style.fontSize = "";
+            var ratio = d.clientWidth / k.scrollWidth;
+            if (ratio < 1) k.style.fontSize = (1.08 * Math.max(0.6, ratio * 0.94)) + "em";
+          });
+        }
+        window.addEventListener("load", function () { fit(); done(); });
+        if (document.fonts) { document.fonts.ready.then(function () { fit(); done(); }); }
         function done() {
           var h = Math.ceil(document.body.getBoundingClientRect().height);
           window.webkit.messageHandlers.height.postMessage(h);
@@ -51,6 +62,7 @@ enum MathHTML {
             katex.render(el.dataset.tex, el, { displayMode: el.tagName === "DIV", throwOnError: false });
           });
         } catch (e) {}
+        fit();
         done();
         window.addEventListener("load", done);
         if (document.fonts) { document.fonts.ready.then(done); }

@@ -13,6 +13,10 @@ struct Flashcard: Identifiable, Hashable {
     var kind = "flip"
     /// The full card as JSON for interactive kinds (rendered and graded by CardEngine)
     var payload: String?
+    /// A picture for the card (diagram, plot, photo), from the Cards database's Image column
+    var image: URL?
+    /// Show the image with the question instead of only with the answer
+    var imageOnFront = false
 
     var isInteractive: Bool { kind != "flip" }
 

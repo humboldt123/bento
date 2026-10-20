@@ -139,6 +139,13 @@ struct CardEngine: UIViewRepresentable {
     }
     function math(el) {
       try { renderMathInElement(el, { delimiters: [{left: "$$", right: "$$", display: true}, {left: "$", right: "$", display: false}], throwOnError: false }); } catch (e) {}
+      // Shrink wide display equations to fit (down to 60%), then scroll
+      el.querySelectorAll(".katex-display").forEach(function (d) {
+        d.style.overflowX = "auto";
+        var k = d.querySelector(".katex"); if (!k) return;
+        var ratio = d.clientWidth / k.scrollWidth;
+        if (ratio < 1) k.style.fontSize = Math.max(0.6, ratio * 0.94) * 1.21 + "em";
+      });
     }
     function measure() { post({ type: "height", value: Math.ceil(document.body.getBoundingClientRect().height) }); }
     function shuffle(a) { a = a.slice(); for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = a[i]; a[i] = a[j]; a[j] = t; } return a; }

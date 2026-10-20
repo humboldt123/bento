@@ -60,6 +60,7 @@ final class DeckStore {
                 let cardId = page.text("Card ID")
                 card["id"] = cardId
                 card["kind"] = page.select("Kind") ?? card["kind"] ?? "flip"
+                if let image = page.url("Image"), !image.isEmpty { card["image"] = image }
                 byDeck[deckId, default: []].append(card)
                 ids[cardId] = page.id
                 StudyProgress.shared.merge(cardId: cardId, box: page.number("Box").map(Int.init),
@@ -97,6 +98,7 @@ final class DeckStore {
 
 /// Deck and card JSON, the format stored in the Cards database's "Data" column:
 ///
+///     every card: image? (URL), imageSide? ("front" | "back", default back)
 ///     flip:     { front, back, tag?, diagram? }
 ///     choice, cloze, match, sort, order, grid, flaw, tag: rendered by CardEngine
 ///     assemble: { prompt, answer: [Expr], alternates?, decoys?, glossary?: [[symbol, meaning]], explain? }
@@ -114,6 +116,15 @@ enum DeckJSON {
                         symbol: (root["symbol"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "rectangle.on.rectangle")
         for raw in root["cards"] as? [[String: Any]] ?? [] {
             guard let cardId = raw["id"] as? String else { continue }
+            let image = (raw["image"] as? String).flatMap(URL.init(string:))
+            let imageOnFront = (raw["imageSide"] as? String) == "front"
+            let before = deck.cards.count
+            defer {
+                if deck.cards.count > before {
+                    deck.cards[deck.cards.count - 1].image = image
+                    deck.cards[deck.cards.count - 1].imageOnFront = imageOnFront
+                }
+            }
             switch raw["kind"] as? String ?? "flip" {
             case "assemble": if let q = assemble(raw, id: cardId) { deck.quizzes.append(q) }
             case "uml":

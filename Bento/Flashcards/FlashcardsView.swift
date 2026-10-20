@@ -328,6 +328,7 @@ struct CardFace: View {
                         .font(.caption2.bold())
                         .foregroundStyle(.secondary)
                 }
+                if let image = card.image { CardImage(url: image) }
                 // Interactive cards are answered, not flipped: showBack means "show it solved"
                 CardEngine(payload: payload, reveal: showBack, height: $engineHeight) { onResult?($0) }
                     .frame(height: engineHeight)
@@ -347,10 +348,12 @@ struct CardFace: View {
                     .foregroundStyle(.secondary)
             }
             MathText(card.front, size: 22, bold: true)
+            if let image = card.image, card.imageOnFront { CardImage(url: image) }
 
             if showBack {
                 Divider()
                 MathText(card.back, size: 17)
+                if let image = card.image, !card.imageOnFront { CardImage(url: image) }
                 if let diagram = card.diagram {
                     UMLDiagramView(diagram: diagram)
                         .padding(.top, 4)
@@ -360,6 +363,86 @@ struct CardFace: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+}
+
+/// A card's picture on a white plate (diagrams are drawn for white), tap to see it full screen
+struct CardImage: View {
+    let url: URL
+    @State private var image: UIImage?
+    @State private var failed = false
+    @State private var zoomed = false
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: 260)
+                    .padding(8)
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.primary.opacity(0.2)))
+                    .onTapGesture { zoomed = true }
+            } else if failed {
+                Label("Image didn't load", systemImage: "photo.badge.exclamationmark")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.06)).frame(height: 160)
+                    .overlay(ProgressView())
+            }
+        }
+        .task(id: url) { await load() }
+        .fullScreenCover(isPresented: $zoomed) {
+            ZoomedImage(image: image) { zoomed = false }
+        }
+    }
+
+    /// Cached on disk (URLCache), so cards keep their pictures offline
+    private func load() async {
+        var request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad)
+        request.setValue("Bento/1.0 (personal flashcards)", forHTTPHeaderField: "User-Agent")
+        if let (data, _) = try? await CardImage.session.data(for: request), let img = UIImage(data: data) {
+            image = img
+        } else {
+            failed = true
+        }
+    }
+
+    static let session: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.urlCache = URLCache(memoryCapacity: 20 << 20, diskCapacity: 300 << 20, diskPath: "card-images")
+        return URLSession(configuration: config)
+    }()
+}
+
+private struct ZoomedImage: View {
+    let image: UIImage?
+    let close: () -> Void
+    @State private var scale: CGFloat = 1
+    @State private var base: CGFloat = 1
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.white.ignoresSafeArea()
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .scaleEffect(scale)
+                    .gesture(MagnifyGesture()
+                        .onChanged { scale = max(1, base * $0.magnification) }
+                        .onEnded { _ in base = scale })
+                    .onTapGesture(count: 2) { withAnimation { scale = scale > 1 ? 1 : 2.5; base = scale } }
+                    .padding()
+            }
+            Button(action: close) {
+                Image(systemName: "xmark").font(.headline).foregroundStyle(.black)
+                    .frame(width: 40, height: 40).background(Color.black.opacity(0.08), in: Circle())
+            }
+            .padding()
+        }
+    }
 }
 
 // MARK: - Unit ladder

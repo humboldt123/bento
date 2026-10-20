@@ -59,6 +59,8 @@ final class DownloadJob: Identifiable {
 struct DownloaderView: View {
     /// "photos", "iphone" (Bento's Downloads) or "cloud"
     @AppStorage("downloaderSaveTarget") private var saveTarget = "photos"
+    /// Last article link opened (shows the other ways to read it)
+    @State private var article: (url: URL, route: ArticleOpener.Route)?
     /// X serves GIFs as silent MP4s; convert them back (shared with the share extension)
     @State private var convertGifs = GifMaker.convertXGifs
     private let cloud = CloudFolder.shared
@@ -73,6 +75,7 @@ struct DownloaderView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     input
+                    if let article { ArticleCard(url: article.url, route: article.route) }
                     if !jobs.isEmpty { jobList }
                     recentSection
                     tip
@@ -185,7 +188,7 @@ struct DownloaderView: View {
 
     private var tip: some View {
         Label {
-            Text("From X: tap Share on a post, then **Bento**. It downloads in the background of the share sheet and lands here.")
+            Text("From X: tap Share on a post, then **Bento**. It downloads in the background of the share sheet and lands here. Paste an article link to read it in its app (NYT, News) or an archived copy.")
         } icon: {
             Image(systemName: "square.and.arrow.up")
         }
@@ -196,6 +199,12 @@ struct DownloaderView: View {
     private func start(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        // Not media: it's an article. Open it where it reads best.
+        if let url = MediaResolver.firstURL(in: trimmed), !MediaResolver.handles(url) {
+            link = ""
+            Task { article = (url, await ArticleOpener.open(url)) }
+            return
+        }
         let job = DownloadJob(link: trimmed)
         jobs.insert(job, at: 0)
         link = ""

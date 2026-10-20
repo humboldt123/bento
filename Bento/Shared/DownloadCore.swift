@@ -96,6 +96,14 @@ enum MediaResolver {
         return detector?.firstMatch(in: trimmed, range: range)?.url
     }
 
+    private static let xHosts = ["x.com", "twitter.com", "mobile.twitter.com", "fxtwitter.com", "vxtwitter.com", "fixupx.com"]
+
+    /// Whether Bento can download media from this link (otherwise it's probably an article)
+    static func handles(_ url: URL) -> Bool {
+        let host = url.host()?.lowercased() ?? ""
+        return xHosts.contains { host == $0 || host.hasSuffix("." + $0) } || mediaExtensions.contains(url.pathExtension.lowercased())
+    }
+
     static func resolve(_ text: String) async throws -> [ResolvedMedia] {
         guard let url = firstURL(in: text) else { throw ResolveError.noLink }
         let host = url.host()?.lowercased() ?? ""

@@ -246,11 +246,11 @@ enum PhotoSaver {
         guard status == .authorized || status == .limited else { throw SaveError.denied }
         let isVideo = UTType(filenameExtension: file.pathExtension)?.conforms(to: .movie) ?? false
         try await PHPhotoLibrary.shared().performChanges {
-            if isVideo {
-                PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: file)
-            } else {
-                PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: file)
-            }
+            let request = isVideo
+                ? PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: file)
+                : PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: file)
+            // Files carry the original post's date; file them under when they were saved instead
+            request?.creationDate = .now
         }
     }
 }

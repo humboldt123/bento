@@ -23,6 +23,7 @@ final class ShareViewController: UIViewController {
         ])
         host.didMove(toParent: self)
 
+        model.openURL = { [weak self] url, appOnly in await self?.openFromExtension(url, appOnly: appOnly) ?? false }
         Task { @MainActor in
             await model.run(items: extensionContext?.inputItems as? [NSExtensionItem] ?? [])
             if case .done = model.state {
@@ -30,6 +31,26 @@ final class ShareViewController: UIViewController {
                 finish()
             }
         }
+    }
+
+    /// Share extensions can't call UIApplication.open directly; the usual workaround is to find the
+    /// application object up the responder chain and send it the open message.
+    private func openFromExtension(_ url: URL, appOnly: Bool) async -> Bool {
+        var responder: UIResponder? = self
+        while let current = responder {
+            if let app = current as? UIApplication {
+                let selector = NSSelectorFromString("openURL:options:completionHandler:")
+                guard app.responds(to: selector), let imp = app.method(for: selector) else { return false }
+                typealias Open = @convention(c) (AnyObject, Selector, NSURL, NSDictionary, (@convention(block) (Bool) -> Void)?) -> Void
+                let open = unsafeBitCast(imp, to: Open.self)
+                let options: NSDictionary = appOnly ? ["UIApplicationOpenURLOptionUniversalLinksOnly": true] : [:]
+                return await withCheckedContinuation { done in
+                    open(app, selector, url as NSURL, options) { ok in done.resume(returning: ok) }
+                }
+            }
+            responder = current.next
+        }
+        return false
     }
 
     private func finish() {
@@ -42,10 +63,23 @@ final class ShareViewController: UIViewController {
 final class ShareModel {
     enum State { case working(String), progress(Double), done(String), failed(String) }
     var state: State = .working("Finding the link…")
+    /// Opens a URL from the extension (set by the view controller); Bool = universal links only
+    var openURL: (URL, Bool) async -> Bool = { _, _ in false }
 
     func run(items: [NSExtensionItem]) async {
         guard let text = await sharedText(items) else {
             state = .failed("Nothing to download in what was shared.")
+            return
+        }
+        // An article, not media: open it where it reads best
+        if let url = MediaResolver.firstURL(in: text), !MediaResolver.handles(url) {
+            state = .working("Opening the article…")
+            if let route = await ArticleRouting.open(url, using: openURL) {
+                state = .done("Opened in \(route.rawValue)")
+            } else {
+                UIPasteboard.general.url = url
+                state = .failed("Couldn't open it from here. The link is copied: paste it in Bento › read.")
+            }
             return
         }
         do {

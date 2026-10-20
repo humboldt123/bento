@@ -3,7 +3,7 @@ import SwiftData
 
 /// A tool on the Bento home screen
 enum BentoTool: String, CaseIterable, Identifiable {
-    case gym, todo, flashcards, downloader, files, paint, edit, compress, gif
+    case gym, todo, flashcards, downloader, read, files, paint, edit, compress, gif
 
     var id: String { rawValue }
 
@@ -18,6 +18,7 @@ enum BentoTool: String, CaseIterable, Identifiable {
         case .edit: "edit"
         case .compress: "compress"
         case .gif: "to gif"
+        case .read: "read"
         }
     }
 
@@ -32,6 +33,7 @@ enum BentoTool: String, CaseIterable, Identifiable {
         case .edit: "scissors"
         case .compress: "arrow.down.right.and.arrow.up.left"
         case .gif: "photo.stack"
+        case .read: "newspaper"
         }
     }
 
@@ -63,15 +65,17 @@ struct HomeMenuView: View {
                     VStack(spacing: 14) {
                         Button { openTool = .flashcards } label: { FlashcardsCard() }
                             .buttonStyle(BentoPressStyle())
-                        Button { openTool = .downloader } label: { SmallToolCard(tool: .downloader, subtitle: "media or articles") }
+                        Button { openTool = .downloader } label: { SmallToolCard(tool: .downloader, subtitle: "paste or share") }
                             .buttonStyle(BentoPressStyle())
                     }
                 }
 
-                HStack(spacing: 14) {
+                HStack(spacing: 12) {
                     Button { openTool = .files } label: { FilesCard() }
                         .buttonStyle(BentoPressStyle())
-                    Button { openTool = .paint } label: { SmallToolCard(tool: .paint, subtitle: "draw, select, paste", height: 110) }
+                    Button { openTool = .read } label: { SmallToolCard(tool: .read, subtitle: "articles", height: 110) }
+                        .buttonStyle(BentoPressStyle())
+                    Button { openTool = .paint } label: { SmallToolCard(tool: .paint, subtitle: "draw", height: 110) }
                         .buttonStyle(BentoPressStyle())
                 }
                 HStack(spacing: 12) {
@@ -107,6 +111,7 @@ struct HomeMenuView: View {
                 case .edit: EditView()
                 case .compress: CompressView()
                 case .gif: GifView()
+                case .read: ReadView()
                 }
             }
             .fontDesign(.rounded)

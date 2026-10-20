@@ -60,7 +60,7 @@ struct DownloaderView: View {
     /// "photos", "iphone" (Bento's Downloads) or "cloud"
     @AppStorage("downloaderSaveTarget") private var saveTarget = "photos"
     /// Last article link opened (shows the other ways to read it)
-    @State private var article: (url: URL, route: ArticleOpener.Route)?
+    @State private var article: (url: URL, route: ArticleRouting.Route)?
     /// X serves GIFs as silent MP4s; convert them back (shared with the share extension)
     @State private var convertGifs = GifMaker.convertXGifs
     private let cloud = CloudFolder.shared
@@ -98,7 +98,7 @@ struct DownloaderView: View {
             HStack {
                 Image(systemName: "link")
                     .foregroundStyle(.secondary)
-                TextField("Paste a link (X post, video, or article)", text: $link)
+                TextField("Paste a link (x.com, twitter.com, .mp4…)", text: $link)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
@@ -188,7 +188,7 @@ struct DownloaderView: View {
 
     private var tip: some View {
         Label {
-            Text("From X: tap Share on a post, then **Bento**. It downloads in the background of the share sheet and lands here. Paste an article link to read it in its app (NYT, News) or an archived copy.")
+            Text("From X: tap Share on a post, then **Bento**. It downloads in the background of the share sheet and lands here.")
         } icon: {
             Image(systemName: "square.and.arrow.up")
         }

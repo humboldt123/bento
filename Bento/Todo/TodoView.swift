@@ -11,7 +11,7 @@ struct TodoView: View {
     private let client = NotionTodoClient()
     private let codes = CourseCodes.shared
 
-    /// Anything due further out than this goes in "Long term"
+    /// Anything due further out than this goes in "Future"
     private static let horizonDays = 14
 
     private var visible: [TodoItem] {
@@ -64,17 +64,6 @@ struct TodoView: View {
                         .foregroundStyle(.red)
                 }
 
-                if !longTerm.isEmpty {
-                    Section {
-                        DisclosureGroup(isExpanded: $showLongTerm) {
-                            ForEach(longTerm) { row($0, showDate: true) }
-                        } label: {
-                            Label("Long term · \(longTerm.count)", systemImage: "calendar.badge.clock")
-                                .font(.subheadline.weight(.semibold))
-                        }
-                    }
-                }
-
                 ForEach(daySections) { section in
                     Section {
                         ForEach(section.items) { row($0, showDate: section.isOverdue) }
@@ -89,6 +78,27 @@ struct TodoView: View {
                 if !noDate.isEmpty {
                     Section("No date") {
                         ForEach(noDate) { row($0, showDate: false) }
+                    }
+                }
+
+                if !longTerm.isEmpty {
+                    Section {
+                        DisclosureGroup(isExpanded: $showLongTerm) {
+                            ForEach(longTerm) { row($0, showDate: true) }
+                        } label: {
+                            Label("Future · \(longTerm.count)", systemImage: "calendar.badge.clock")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                    }
+                }
+
+                if client != nil {
+                    Section {
+                        Button {
+                            showAdd = true
+                        } label: {
+                            Label("New task", systemImage: "plus.circle")
+                        }
                     }
                 }
 
@@ -292,6 +302,22 @@ struct AddTodoView: View {
                 if type == "School" {
                     TextField("Course (e.g. MATH 410)", text: $course)
                         .textInputAutocapitalization(.characters)
+                    // Courses Bento has seen on your tasks, one tap to fill in
+                    let known = Array(Set(CourseCodes.shared.codes.values)).sorted()
+                    if !known.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(known, id: \.self) { code in
+                                    Button(code) { course = code }
+                                        .font(.caption.bold())
+                                        .padding(.horizontal, 10).padding(.vertical, 5)
+                                        .background(CourseColors.color(for: code).opacity(course == code ? 0.35 : 0.15), in: Capsule())
+                                        .foregroundStyle(CourseColors.color(for: code))
+                                        .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                    }
                 }
                 if let error {
                     Text(error).foregroundStyle(.red).font(.caption)

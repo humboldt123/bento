@@ -98,7 +98,7 @@ struct DownloaderView: View {
             HStack {
                 Image(systemName: "link")
                     .foregroundStyle(.secondary)
-                TextField("Paste a link (x.com, twitter.com, .mp4…)", text: $link)
+                TextField("Paste a link (X post, video, or article)", text: $link)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)

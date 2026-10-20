@@ -63,7 +63,7 @@ struct HomeMenuView: View {
                     VStack(spacing: 14) {
                         Button { openTool = .flashcards } label: { FlashcardsCard() }
                             .buttonStyle(BentoPressStyle())
-                        Button { openTool = .downloader } label: { SmallToolCard(tool: .downloader, subtitle: "paste or share") }
+                        Button { openTool = .downloader } label: { SmallToolCard(tool: .downloader, subtitle: "media or articles") }
                             .buttonStyle(BentoPressStyle())
                     }
                 }

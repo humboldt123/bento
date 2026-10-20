@@ -31,6 +31,7 @@ enum GymSync {
             gym.availableExerciseIds = Array(Set(gym.availableExerciseIds + ids(row.text("Exercises"))))
             gym.allowedEquipmentIds = ids(row.text("Equipment")).compactMap { Int($0) }
             gym.singleDumbbell = row.checkbox("Single Dumbbell")
+            gym.dumbbellMin = row.number("Dumbbell Min")
             gym.dumbbellMax = row.number("Dumbbell Max")
             gym.dumbbellStep = row.number("Dumbbell Step")
             if let logo = row.url("Logo") ?? Optional(row.text("Logo")), !logo.isEmpty { logos[name] = logo }

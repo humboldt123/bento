@@ -47,6 +47,8 @@ extension WorkoutEngine {
         let targetReps: [Int]
         let lastWeight: Double
         let lastReps: [Int]
+        /// No history here: weight estimated from another gym, worth double-checking
+        var isGuess = false
     }
 
     struct ExerciseSuggestion: Identifiable {
@@ -107,7 +109,7 @@ extension WorkoutEngine {
 
         let pool = split.categories
             .flatMap { exerciseStore.exercises(category: $0) }
-            .filter { gym?.allows($0) ?? true }
+            .filter { gym?.suggests($0) ?? true }
 
         let carried = CarryOver.pending(sessions: sessions, now: now)
 
@@ -189,7 +191,7 @@ extension WorkoutEngine {
         let done = Set(sessions.flatMap(\.exerciseIds))
         return exerciseStore.exercises
             .filter { $0.id != exercise.id && !excluding.contains($0.id) }
-            .filter { gym?.allows($0) ?? true }
+            .filter { gym?.suggests($0) ?? true }
             .compactMap { ex -> (ExerciseDefinition, Int)? in
                 let overlap = targets.intersection(ex.targetMuscleIds).count
                 guard overlap > 0 else { return nil }
@@ -210,43 +212,102 @@ extension WorkoutEngine {
         !Set(exercise.equipmentIds).isDisjoint(with: [3, 6, 7, 8]) // cable, leverage, sled, smith
     }
 
+    /// No weight on the exercise itself (push-ups, pull-ups…): progressed by reps
+    static func isBodyweight(_ exercise: ExerciseDefinition) -> Bool {
+        let eq = Set(exercise.equipmentIds)
+        return !eq.isEmpty && eq.isSubset(of: [2])
+    }
+
+    /// Working sets from recent sessions, newest first (at this gym, for machines)
+    static func recentPerformances(
+        of exercise: ExerciseDefinition,
+        gym: Gym?,
+        sessions: [WorkoutSession],
+        limit: Int = 4
+    ) -> [(date: Date, sets: [WorkoutSet])] {
+        let gymSpecific = isGymSpecific(exercise) && gym != nil
+        let bodyweight = isBodyweight(exercise)
+        var out: [(Date, [WorkoutSet])] = []
+        for session in sessions.sorted(by: { $0.date > $1.date }) where out.count < limit {
+            if gymSpecific, session.gymName != gym?.name { continue }
+            guard let entry = session.entries.first(where: { $0.exerciseId == exercise.id }) else { continue }
+            let working = entry.sortedSets.filter {
+                !$0.isPlanned && $0.reps != nil && ($0.weight != nil || bodyweight)
+                    && !$0.tags.contains(SetTag.warmup.rawValue)
+            }
+            if !working.isEmpty { out.append((session.date, working)) }
+        }
+        return out.map { (date: $0.0, sets: $0.1) }
+    }
+
     /// Working sets from the most recent time you did this (at this gym, for machines)
     static func lastPerformance(
         of exercise: ExerciseDefinition,
         gym: Gym?,
         sessions: [WorkoutSession]
     ) -> (date: Date, sets: [WorkoutSet])? {
-        let gymSpecific = isGymSpecific(exercise) && gym != nil
-        for session in sessions.sorted(by: { $0.date > $1.date }) {
-            if gymSpecific, session.gymName != gym?.name { continue }
-            guard let entry = session.entries.first(where: { $0.exerciseId == exercise.id }) else { continue }
-            let working = entry.sortedSets.filter {
-                $0.weight != nil && $0.reps != nil && !$0.tags.contains(SetTag.warmup.rawValue)
-            }
-            if !working.isEmpty { return (session.date, working) }
-        }
-        return nil
+        recentPerformances(of: exercise, gym: gym, sessions: sessions, limit: 1).first
     }
 
-    /// Reps first: add a rep to each set until every set hits the top of the range, then
-    /// go up one weight step. After a long break, start lighter.
+    /// Top weight and the reps done at it
+    private static func summary(_ sets: [WorkoutSet]) -> (top: Double, reps: [Int]) {
+        let top = sets.compactMap(\.weight).max() ?? 0
+        return (top, sets.filter { ($0.weight ?? 0) == top }.compactMap(\.reps))
+    }
+
+    /// Reps first: add a rep to each set until every set hits the top of the range, then go up one
+    /// weight step. Looks at the last few sessions, so one off day doesn't drop the target, and a
+    /// stall (no progress three times) resets lighter. After a long break, start lighter. With no
+    /// history at this gym, guesses from another gym.
     static func plan(
         for exercise: ExerciseDefinition,
         gym: Gym?,
         sessions: [WorkoutSession],
         now: Date = .now
     ) -> (SetPlan?, String?) {
-        guard let last = lastPerformance(of: exercise, gym: gym, sessions: sessions) else {
-            if let gym, isGymSpecific(exercise) {
-                return (nil, "First time at \(gym.name)")
+        let recent = recentPerformances(of: exercise, gym: gym, sessions: sessions)
+        guard let last = recent.first else { return guess(for: exercise, gym: gym, sessions: sessions) }
+
+        let isDumbbell = exercise.equipmentIds.contains(4)
+        func snap(_ w: Double) -> Double { isDumbbell ? (gym?.snapDumbbell(w) ?? w) : w }
+
+        let lastSummary = summary(last.sets)
+        let daysOff = Calendar.current.dateComponents([.day], from: last.date, to: now).day ?? 0
+
+        // Bodyweight: reps only, no ceiling at 12
+        if isBodyweight(exercise) {
+            let reps = last.sets.compactMap(\.reps)
+            if daysOff > comebackDays {
+                return (SetPlan(weight: 0, targetReps: reps.map { max(1, $0 - 2) }, lastWeight: 0, lastReps: reps),
+                        "Ease back in (\(daysOff / 7) wks off)")
             }
-            return (nil, nil)
+            return (SetPlan(weight: 0, targetReps: reps.map { $0 + 1 }, lastWeight: 0, lastReps: reps), "+1 rep")
         }
 
-        let top = last.sets.compactMap(\.weight).max() ?? 0
-        let lastReps = last.sets.filter { $0.weight == top }.compactMap(\.reps)
+        // Reference: the better of the last two sessions, so an off day doesn't lower the bar
+        var reference = lastSummary
+        var offDay = false
+        if recent.count > 1 {
+            let prev = summary(recent[1].sets)
+            let lastScore = lastSummary.top * 100 + Double(lastSummary.reps.reduce(0, +))
+            let prevScore = prev.top * 100 + Double(prev.reps.reduce(0, +))
+            if prevScore > lastScore, daysOff <= comebackDays {
+                reference = prev
+                offDay = true
+            }
+        }
+        let top = reference.top
+        let lastReps = reference.reps
         let step = weightStep(for: exercise, gym: gym, sessions: sessions)
-        let daysOff = Calendar.current.dateComponents([.day], from: last.date, to: now).day ?? 0
+
+        // Stalled: three sessions at the same top weight without more total reps
+        let stalled: Bool = {
+            guard recent.count >= 3 else { return false }
+            let three = recent.prefix(3).map { summary($0.sets) }
+            guard three.allSatisfy({ $0.top == three[0].top }) else { return false }
+            let totals = three.map { $0.reps.reduce(0, +) }   // newest first
+            return totals[0] <= totals[2]
+        }()
 
         var weight: Double
         var reps: [Int]
@@ -256,6 +317,10 @@ extension WorkoutEngine {
             weight = max(step, ((top * 0.85) / step).rounded(.down) * step)
             reps = Array(repeating: repRange.upperBound - 2, count: max(lastReps.count, 3))
             note = "Ease back in (\(daysOff / 7) wks off)"
+        } else if stalled {
+            weight = max(step, ((top * 0.9) / step).rounded(.down) * step)
+            reps = Array(repeating: repRange.upperBound, count: max(lastReps.count, 3))
+            note = "Stuck 3 sessions: reset lighter, build back up"
         } else if lastReps.allSatisfy({ $0 >= repRange.upperBound }) {
             weight = top + step
             reps = Array(repeating: repRange.lowerBound, count: lastReps.count)
@@ -263,16 +328,40 @@ extension WorkoutEngine {
         } else {
             weight = top
             reps = lastReps.map { min(repRange.upperBound, $0 + 1) }
-            note = "+1 rep"
+            note = offDay ? "Off day last time, aiming from the one before" : "+1 rep"
         }
 
-        if let cap = gym?.dumbbellMax, exercise.equipmentIds.contains(4), weight > cap {
+        weight = snap(weight)
+        if let cap = gym?.dumbbellMax, isDumbbell, weight >= cap, top >= cap {
             weight = cap
             reps = Array(repeating: repRange.upperBound, count: reps.count)
             note = "Max dumbbell, go for reps"
         }
 
-        return (SetPlan(weight: weight, targetReps: reps, lastWeight: top, lastReps: lastReps), note)
+        return (SetPlan(weight: weight, targetReps: reps, lastWeight: lastSummary.top, lastReps: lastSummary.reps), note)
+    }
+
+    /// No history at this gym: take the same exercise elsewhere, a bit lighter (machines differ),
+    /// and say it's a guess
+    private static func guess(for exercise: ExerciseDefinition, gym: Gym?, sessions: [WorkoutSession]) -> (SetPlan?, String?) {
+        guard let gym, isGymSpecific(exercise) else { return (nil, nil) }
+        guard let other = recentPerformances(of: exercise, gym: nil, sessions: sessions, limit: 1).first,
+              let otherGym = sessions.first(where: { $0.date == other.date })?.gymName else {
+            return (nil, "First time at \(gym.name)")
+        }
+        let s = summary(other.sets)
+        let step = weightStep(for: exercise, gym: gym, sessions: sessions)
+        var weight = max(step, ((s.top * 0.8) / step).rounded(.down) * step)
+        if exercise.equipmentIds.contains(4) { weight = gym.snapDumbbell(weight) }
+        let plan = SetPlan(weight: weight, targetReps: [10, 10, 10], lastWeight: s.top, lastReps: s.reps, isGuess: true)
+        return (plan, "Guess: ~80% of \(otherGym) (\(s.top.clean) lb)")
+    }
+
+    /// Next weight up from `weight` for this exercise (snapped for dumbbells)
+    static func nextWeight(after weight: Double, exercise: ExerciseDefinition, gym: Gym?, sessions: [WorkoutSession]) -> Double {
+        let step = weightStep(for: exercise, gym: gym, sessions: sessions)
+        let next = weight + step
+        return exercise.equipmentIds.contains(4) ? (gym?.snapDumbbell(next) ?? next) : next
     }
 
     /// Smallest jump between weights you've used on this machine, else a sensible default.

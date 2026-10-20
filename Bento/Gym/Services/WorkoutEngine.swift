@@ -99,11 +99,14 @@ final class WorkoutEngine {
     }
 
     /// History of estimated 1RM for a specific exercise over time
+    /// `gymName`: only sessions at that gym (machine weights don't compare across gyms)
     static func exerciseHistory(
         exerciseId: String,
-        sessions: [WorkoutSession]
+        sessions: [WorkoutSession],
+        gymName: String? = nil
     ) -> [(date: Date, estimated1RM: Double, topWeight: Double, topReps: Int)] {
         sessions
+            .filter { gymName == nil || $0.gymName == gymName }
             .sorted { $0.date < $1.date }
             .compactMap { session in
                 guard let entry = session.entries.first(where: { $0.exerciseId == exerciseId }) else {

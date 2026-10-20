@@ -12,8 +12,28 @@ struct ExerciseDetailView: View {
         gyms.first { $0.name == currentGymName }
     }
 
+    /// Machines and cables: chart one gym at a time
+    @State private var chartGym: String?
+
+    private var gymSpecific: Bool { WorkoutEngine.isGymSpecific(exercise) }
+
+    /// Gyms where this exercise was done, most recent first
+    private var gymsWithHistory: [String] {
+        var seen: [String] = []
+        for s in sessions where s.entries.contains(where: { $0.exerciseId == exercise.id }) {
+            if let g = s.gymName, !seen.contains(g) { seen.append(g) }
+        }
+        return seen
+    }
+
+    private var shownGym: String? {
+        guard gymSpecific else { return nil }
+        if let chartGym, gymsWithHistory.contains(chartGym) { return chartGym }
+        return gymsWithHistory.contains(currentGymName) ? currentGymName : gymsWithHistory.first
+    }
+
     private var history: [(date: Date, estimated1RM: Double, topWeight: Double, topReps: Int)] {
-        WorkoutEngine.exerciseHistory(exerciseId: exercise.id, sessions: Array(sessions))
+        WorkoutEngine.exerciseHistory(exerciseId: exercise.id, sessions: Array(sessions), gymName: shownGym)
     }
 
     private var pr: (weight: Double, reps: Int, e1rm: Double, date: Date)? {
@@ -205,13 +225,31 @@ struct ExerciseDetailView: View {
 
     @ViewBuilder
     private var chartSection: some View {
-        if history.count >= 2 {
+        if history.count >= 2 || (gymSpecific && gymsWithHistory.count > 1) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Estimated 1RM Over Time")
-                    .font(.headline)
+                HStack {
+                    Text("Estimated 1RM Over Time")
+                        .font(.headline)
+                    Spacer()
+                    if gymSpecific, gymsWithHistory.count > 1 {
+                        Menu {
+                            ForEach(gymsWithHistory, id: \.self) { g in Button(g) { chartGym = g } }
+                        } label: {
+                            Label(shownGym ?? "", systemImage: "chevron.down").font(.caption.bold())
+                        }
+                    } else if let shownGym {
+                        Text(shownGym).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
 
-                SimpleChart(data: history.map { ($0.date, $0.estimated1RM) })
-                    .frame(height: 160)
+                if history.count >= 2 {
+                    SimpleChart(data: history.map { ($0.date, $0.estimated1RM) })
+                        .frame(height: 160)
+                } else {
+                    Text("Not enough sessions here yet to chart")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             .padding(16)
             .bentoCard(cornerRadius: 18)

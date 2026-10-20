@@ -111,6 +111,8 @@ final class Gym {
     var allowedEquipmentIds = [Int]()
     /// Only one dumbbell (home), so two-dumbbell exercises are out
     var singleDumbbell = false
+    /// Adjustable dumbbell range: weights are min, min + step, … up to max (e.g. 3, 5.5, 8 … 28)
+    var dumbbellMin: Double?
     var dumbbellMax: Double?
     var dumbbellStep: Double?
 
@@ -134,6 +136,26 @@ final class Gym {
             return false
         }
         return true
+    }
+
+    /// Stricter than `allows`, for suggestions: once a gym has a confirmed list, only confirmed
+    /// exercises are suggested (blank equipment would otherwise allow everything)
+    func suggests(_ exercise: ExerciseDefinition) -> Bool {
+        guard allows(exercise) else { return false }
+        if !availableExerciseIds.isEmpty, allowedEquipmentIds.isEmpty {
+            return availableExerciseIds.contains(exercise.id)
+        }
+        return true
+    }
+
+    /// Nearest real dumbbell weight: min + n·step, within [min, max]
+    func snapDumbbell(_ weight: Double) -> Double {
+        guard let step = dumbbellStep, step > 0 else { return weight }
+        let low = dumbbellMin ?? step
+        var w = low + ((weight - low) / step).rounded() * step
+        w = max(low, w)
+        if let high = dumbbellMax { w = min(high, w) }
+        return w
     }
 
     func status(of exerciseId: String) -> GymAvailability {

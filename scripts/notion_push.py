@@ -116,7 +116,7 @@ def push_gyms(path):
             "Name": text(g["name"], "title"), "Exercises": text(", ".join(g.get("exercises", []))),
             "Equipment": text(", ".join(map(str, g.get("equipment", [])))),
             "Single Dumbbell": {"checkbox": g.get("singleDumbbell", False)},
-            "Dumbbell Max": {"number": g.get("dumbbellMax")}, "Dumbbell Step": {"number": g.get("dumbbellStep")},
+            "Dumbbell Min": {"number": g.get("dumbbellMin")}, "Dumbbell Max": {"number": g.get("dumbbellMax")}, "Dumbbell Step": {"number": g.get("dumbbellStep")},
             "Logo": {"url": g.get("logo")}, "Default": {"checkbox": g.get("default", False)}, "Order": {"number": i}}))
 
 

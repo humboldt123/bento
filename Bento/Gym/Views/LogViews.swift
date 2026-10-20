@@ -7,9 +7,12 @@ struct ActiveSessionView: View {
     @Environment(ExerciseStore.self) private var store
     @Environment(GymSession.self) private var gymSession
     @Query(sort: \Gym.name) private var gyms: [Gym]
+    @Query private var allSessions: [WorkoutSession]
     @AppStorage(CurrentGym.storageKey) private var currentGymName = ""
 
     @State private var showExerciseSearch = false
+    /// "No other machine for that" etc.
+    @State private var swapMessage: String?
     /// Picked in search; opened once the search sheet is gone
     @State private var pendingEntry: WorkoutEntry?
     @State private var editingEntry: WorkoutEntry?
@@ -28,6 +31,13 @@ struct ActiveSessionView: View {
                                 EntryRow(entry: entry)
                             }
                             .buttonStyle(.plain)
+                            .contextMenu { entryMenu(entry, in: session) }
+                            .swipeActions(edge: .leading) {
+                                Button { swap(entry, in: session) } label: { Label("Taken", systemImage: "arrow.triangle.2.circlepath") }
+                                    .tint(.orange)
+                                Button { moveToEnd(entry, in: session) } label: { Label("Later", systemImage: "clock") }
+                                    .tint(.blue)
+                            }
                         }
                         .onDelete { offsets in
                             let entries = session.sortedEntries
@@ -38,6 +48,9 @@ struct ActiveSessionView: View {
                         }
                     } header: {
                         gymMenu(session)
+                    } footer: {
+                        Text(swapMessage ?? "Machine taken? Swipe right on an exercise or hold it to swap, try later or skip.")
+                            .font(.caption)
                     }
                 }
 
@@ -76,6 +89,62 @@ struct ActiveSessionView: View {
                 SetEntrySheet(entry: entry)
             }
         }
+    }
+
+    // MARK: Taken / later / skip
+
+    private var gym: Gym? { gyms.first { $0.name == (session?.gymName ?? currentGymName) } }
+
+    @ViewBuilder
+    private func entryMenu(_ entry: WorkoutEntry, in session: WorkoutSession) -> some View {
+        Button { swap(entry, in: session) } label: {
+            Label("Taken, swap it", systemImage: "arrow.triangle.2.circlepath")
+        }
+        Button { moveToEnd(entry, in: session) } label: {
+            Label("Try later", systemImage: "clock")
+        }
+        Button { skip(entry, in: session) } label: {
+            Label("Skip today (do it first next time)", systemImage: "forward")
+        }
+    }
+
+    /// Puts a substitute (same muscles, available here) right after the taken exercise, with its
+    /// own planned sets, and moves the taken one to the end to try later
+    private func swap(_ entry: WorkoutEntry, in session: WorkoutSession) {
+        guard let ex = store.exercise(id: entry.exerciseId) else { return }
+        let history = allSessions.filter { $0 !== session }
+        guard let sub = WorkoutEngine.substitute(for: ex, excluding: Set(session.exerciseIds),
+                                                 exerciseStore: store, gym: gym, sessions: history) else {
+            swapMessage = "No substitute for \(ex.name) here. Moved it to the end."
+            moveToEnd(entry, in: session)
+            return
+        }
+        for e in session.entries where e.order > entry.order { e.order += 1 }
+        let new = WorkoutEntry(exerciseId: sub.id, order: entry.order + 1)
+        let (plan, _) = WorkoutEngine.plan(for: sub, gym: gym, sessions: history)
+        let reps: [Int?] = plan?.targetReps ?? [nil, nil, nil]
+        for (j, r) in reps.enumerated() {
+            let set = WorkoutSet(order: j, weight: plan?.weight, reps: r)
+            set.isPlanned = true
+            new.sets.append(set)
+        }
+        session.entries.append(new)
+        if !entry.sets.contains(where: { !$0.isPlanned }) { moveToEnd(entry, in: session) }
+        swapMessage = "\(sub.name) instead of \(ex.name). \(ex.name) moved to the end."
+    }
+
+    private func moveToEnd(_ entry: WorkoutEntry, in session: WorkoutSession) {
+        entry.order = (session.entries.map(\.order).max() ?? 0) + 1
+    }
+
+    /// Drops it from today (if nothing logged) and puts it first next time
+    private func skip(_ entry: WorkoutEntry, in session: WorkoutSession) {
+        CarryOver.add([entry.exerciseId])
+        if !entry.sets.contains(where: { !$0.isPlanned }) {
+            session.entries.removeAll { $0 === entry }
+            modelContext.delete(entry)
+        }
+        swapMessage = "Skipped. It'll be first next time."
     }
 
     private func gymMenu(_ session: WorkoutSession) -> some View {
@@ -183,6 +252,10 @@ struct SetEntrySheet: View {
 
     @State private var weight: Double = 0
     @State private var reps = 10
+    /// "Guess: ~80% of SIG (85 lb)" when there's no history at this gym
+    @State private var guessNote: String?
+    /// Suggested next weight after a set that hit the top of the rep range
+    @State private var nudge: Double?
 
     private var exercise: ExerciseDefinition? { store.exercise(id: entry.exerciseId) }
     private var gym: Gym? { gyms.first { $0.name == (entry.session?.gymName ?? currentGymName) } }
@@ -209,6 +282,10 @@ struct SetEntrySheet: View {
                     Text(lastTime)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                } else if let guessNote {
+                    Label(guessNote, systemImage: "questionmark.circle")
+                        .font(.subheadline)
+                        .foregroundStyle(.orange)
                 }
 
                 VStack(spacing: 14) {
@@ -225,6 +302,23 @@ struct SetEntrySheet: View {
                         .font(.title3.bold())
                 }
                 .buttonStyle(BentoButtonStyle())
+
+                if let nudge {
+                    HStack {
+                        Text("Hit \(WorkoutEngine.repRange.upperBound)+ reps. Had more in the tank?")
+                            .font(.subheadline)
+                        Spacer()
+                        Button("Try \(nudge.clean) lb") {
+                            weight = nudge
+                            reps = WorkoutEngine.repRange.lowerBound
+                            self.nudge = nil
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.primary)
+                    }
+                    .padding(12)
+                    .bentoCard(cornerRadius: 14)
+                }
 
                 List {
                     ForEach(Array(done.enumerated()), id: \.element.id) { i, set in
@@ -293,6 +387,11 @@ struct SetEntrySheet: View {
 
     /// Next planned target, else repeat the last set, else the suggestion, else last time
     private func prefill() {
+        // Flag guessed weights (no history at this gym) whichever way the weight gets filled in
+        if lastTime == nil, let exercise {
+            let (plan, note) = WorkoutEngine.plan(for: exercise, gym: gym, sessions: sessions.filter { $0 !== entry.session })
+            guessNote = plan?.isGuess == true ? note : nil
+        }
         if let next = planned.first, next.weight != nil || next.reps != nil {
             weight = next.weight ?? 0
             reps = next.reps ?? 10
@@ -300,13 +399,21 @@ struct SetEntrySheet: View {
             weight = last.weight ?? 0
             reps = last.reps ?? 10
         } else if let exercise {
-            let (plan, _) = WorkoutEngine.plan(for: exercise, gym: gym, sessions: sessions.filter { $0 !== entry.session })
+            let (plan, note) = WorkoutEngine.plan(for: exercise, gym: gym, sessions: sessions.filter { $0 !== entry.session })
             weight = plan?.weight ?? 0
             reps = plan?.targetReps.first ?? 10
+            _ = note
         }
     }
 
     private func addSet() {
+        // An easy set at the top of the range: offer the next step (stacks can jump 15 lb)
+        if let exercise, weight > 0, reps >= WorkoutEngine.repRange.upperBound {
+            let up = WorkoutEngine.nextWeight(after: weight, exercise: exercise, gym: gym, sessions: sessions)
+            nudge = up > weight ? up : nil
+        } else {
+            nudge = nil
+        }
         if let next = planned.first {
             next.weight = weight
             next.reps = reps

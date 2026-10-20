@@ -1,0 +1,15 @@
+// Copy to Config.xcconfig (gitignored) and fill in.
+
+// Notion: an internal integration's secret, plus the databases it's connected to
+NOTION_SECRET =
+TODO_DB =
+COURSES_DB =
+DECKS_DB =
+CARDS_DB =
+GYMLOG_DB =
+GYMS_DB =
+
+// Signing: your Apple team and a reverse-DNS prefix you own (bundle id = <prefix>.bento)
+DEVELOPMENT_TEAM =
+BUNDLE_ID_PREFIX = com.example
+CODE_SIGN_STYLE = Automatic

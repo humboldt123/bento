@@ -1,0 +1,188 @@
+import Foundation
+import SwiftData
+
+@Model
+final class WorkoutSession {
+    var id = UUID()
+    var date = Date.now
+    var gymName: String?
+    var notes: String?
+    @Relationship(deleteRule: .cascade) var entries = [WorkoutEntry]()
+
+    init(date: Date = .now, gymName: String? = nil) {
+        self.date = date
+        self.gymName = gymName
+    }
+
+    var sortedEntries: [WorkoutEntry] {
+        entries.sorted { $0.order < $1.order }
+    }
+
+    var totalSets: Int {
+        entries.reduce(0) { $0 + $1.sets.filter { !$0.isPlanned }.count }
+    }
+
+    /// Has at least one set actually done (not just planned from a suggestion)
+    var isLogged: Bool { totalSets > 0 }
+
+    var totalVolume: Double {
+        entries.reduce(0) { total, entry in
+            total + entry.sets.reduce(0) { setTotal, s in
+                setTotal + (s.weight ?? 0) * Double(s.reps ?? 0)
+            }
+        }
+    }
+
+    var exerciseIds: [String] {
+        sortedEntries.map(\.exerciseId)
+    }
+}
+
+@Model
+final class WorkoutEntry {
+    var id = UUID()
+    var exerciseId = ""
+    var order = 0
+    var note: String?
+    var session: WorkoutSession?
+    @Relationship(deleteRule: .cascade) var sets = [WorkoutSet]()
+
+    init(exerciseId: String, order: Int) {
+        self.exerciseId = exerciseId
+        self.order = order
+    }
+
+    var sortedSets: [WorkoutSet] {
+        sets.sorted { $0.order < $1.order }
+    }
+
+    var bestEstimated1RM: Double? {
+        sets.compactMap(\.estimated1RM).max()
+    }
+
+    var topWeight: Double? {
+        sets.compactMap(\.weight).max()
+    }
+}
+
+@Model
+final class WorkoutSet {
+    var id = UUID()
+    var order = 0
+    var weight: Double?
+    var reps: Int?
+    var tags = [String]()
+    var note: String?
+    /// Prefilled from a suggestion (target weight/reps) and not done yet; dropped on finish
+    var isPlanned = false
+    var entry: WorkoutEntry?
+
+    init(order: Int, weight: Double? = nil, reps: Int? = nil) {
+        self.order = order
+        self.weight = weight
+        self.reps = reps
+    }
+
+    var estimated1RM: Double? {
+        guard let w = weight, w > 0, let r = reps, r > 0 else { return nil }
+        if r == 1 { return w }
+        return w * (1.0 + Double(r) / 30.0)
+    }
+
+    var volume: Double {
+        (weight ?? 0) * Double(reps ?? 0)
+    }
+
+    var displayText: String {
+        let w = weight.map { "\($0.clean) lb" } ?? "BW"
+        let r = reps.map { "×\($0)" } ?? ""
+        let t = tags.isEmpty ? "" : " (\(tags.joined(separator: ", ")))"
+        return "\(w)\(r)\(t)"
+    }
+}
+
+@Model
+final class Gym {
+    var id = UUID()
+    var name = ""
+    var unavailableExerciseIds = [String]()
+    var availableExerciseIds = [String]()
+    /// Equipment ids (EquipmentInfo) this gym has at all; empty means anything goes
+    var allowedEquipmentIds = [Int]()
+    /// Only one dumbbell (home), so two-dumbbell exercises are out
+    var singleDumbbell = false
+    var dumbbellMax: Double?
+    var dumbbellStep: Double?
+
+    init(name: String) {
+        self.name = name
+    }
+
+    func isAvailable(_ exerciseId: String) -> Bool {
+        !unavailableExerciseIds.contains(exerciseId)
+    }
+
+    /// Marks plus equipment rules (e.g. home only has one dumbbell)
+    func allows(_ exercise: ExerciseDefinition) -> Bool {
+        guard isAvailable(exercise.id) else { return false }
+        if availableExerciseIds.contains(exercise.id) { return true }
+        if !allowedEquipmentIds.isEmpty,
+           !exercise.equipmentIds.allSatisfy({ allowedEquipmentIds.contains($0) }) {
+            return false
+        }
+        if singleDumbbell, exercise.exerciseType?.hasPrefix("db_2") == true {
+            return false
+        }
+        return true
+    }
+
+    func status(of exerciseId: String) -> GymAvailability {
+        if unavailableExerciseIds.contains(exerciseId) { return .missing }
+        if availableExerciseIds.contains(exerciseId) { return .confirmed }
+        return .unknown
+    }
+
+    func setStatus(_ status: GymAvailability, for exerciseId: String) {
+        unavailableExerciseIds.removeAll { $0 == exerciseId }
+        availableExerciseIds.removeAll { $0 == exerciseId }
+        switch status {
+        case .missing: unavailableExerciseIds.append(exerciseId)
+        case .confirmed: availableExerciseIds.append(exerciseId)
+        case .unknown: break
+        }
+    }
+}
+
+enum GymAvailability {
+    case confirmed, missing, unknown
+}
+
+/// The gym you're currently training at, by name (persisted across launches)
+enum CurrentGym {
+    static let storageKey = "currentGymName"
+}
+
+enum SetTag: String, CaseIterable, Codable {
+    case failure
+    case badForm = "bad form"
+    case pain
+    case partial
+    case warmup
+
+    var label: String { rawValue.capitalized }
+    var icon: String {
+        switch self {
+        case .failure: "xmark.circle"
+        case .badForm: "exclamationmark.triangle"
+        case .pain: "bolt.fill"
+        case .partial: "circle.bottomhalf.filled"
+        case .warmup: "flame"
+        }
+    }
+}
+
+extension Double {
+    var clean: String {
+        truncatingRemainder(dividingBy: 1) == 0 ? String(format: "%.0f", self) : String(format: "%.1f", self)
+    }
+}

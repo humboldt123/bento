@@ -1,7 +1,7 @@
 import SwiftUI
 import WebKit
 
-/// Card text with real math: $inline$ and $$display$$ TeX via KaTeX, plus **bold**, `code`
+/// Card text with real math: $inline$ and $$display$$ TeX via KaTeX, plus **bold**, *italic*, `code`
 /// and line breaks. Sizes itself to its content; taps pass through to the card.
 struct MathText: View {
     let text: String
@@ -75,6 +75,7 @@ enum MathHTML {
         s = escape(s)
         s = s.replacing(/`([^`]+)`/) { m in "<code>\(m.1)</code>" }
         s = s.replacing(/\*\*([^*]+)\*\*/) { m in "<b>\(m.1)</b>" }
+        s = s.replacing(/\*([^*\s][^*]*)\*/) { m in "<i>\(m.1)</i>" }
 
         let paragraphs = s.components(separatedBy: "\n\n").map {
             "<p>" + $0.replacingOccurrences(of: "\n", with: "<br>") + "</p>"
@@ -171,6 +172,7 @@ enum TeXPlain {
     static func convert(_ text: String) -> String {
         var s = text.replacingOccurrences(of: "$$", with: "").replacingOccurrences(of: "$", with: "")
             .replacingOccurrences(of: "**", with: "")
+            .replacing(/\*([^*\s][^*]*)\*/) { String($0.1) }
         // Inner-most groups first, a few passes for nesting
         for _ in 0..<4 {
             s = s.replacing(/\\(?:mathrm|text|operatorname|mathbf)\{([^{}]*)\}/) { String($0.1) }

@@ -15,6 +15,8 @@ final class DownloadJob: Identifiable {
     let link: String
     var state: State = .resolving
     var files: [URL] = []
+    /// Downloads that went to Photos instead of a folder
+    var inPhotos = 0
 
     init(link: String) { self.link = link }
 
@@ -39,6 +41,7 @@ final class DownloadJob: Identifiable {
                     do {
                         try await PhotoSaver.save(file)
                         try? FileManager.default.removeItem(at: file)  // it lives in Photos now
+                        inPhotos += 1
                         continue
                     } catch { saved = false }
                 }
@@ -98,7 +101,7 @@ struct DownloaderView: View {
             HStack {
                 Image(systemName: "link")
                     .foregroundStyle(.secondary)
-                TextField("Paste a link (x.com, twitter.com, .mp4…)", text: $link)
+                TextField("Paste a link (X, Instagram, YouTube, .mp4…)", text: $link)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
@@ -188,7 +191,7 @@ struct DownloaderView: View {
 
     private var tip: some View {
         Label {
-            Text("From X: tap Share on a post, then **Bento**. It downloads in the background of the share sheet and lands here.")
+            Text("From X, Instagram or YouTube: tap Share, then **Bento**. It downloads in the background of the share sheet and lands here.")
         } icon: {
             Image(systemName: "square.and.arrow.up")
         }
@@ -238,9 +241,11 @@ private struct JobRow: View {
             case .downloading(let p):
                 ProgressView(value: p) { Text("Downloading \(Int(p * 100))%").font(.subheadline) }
                     .tint(.primary)
-            case .done(let saved):
+            case .done:
+                let inFiles = job.files.count == 1 ? job.files[0].lastPathComponent : "\(job.files.count) files"
+                let inPhotos = job.inPhotos == 1 ? "Saved to Photos" : "\(job.inPhotos) saved to Photos"
                 Label(
-                    "\(job.files.count == 1 ? job.files[0].lastPathComponent : "\(job.files.count) files")" + (saved ? " · in Photos" : ""),
+                    job.files.isEmpty ? inPhotos : job.inPhotos == 0 ? inFiles : "\(inFiles) · \(inPhotos)",
                     systemImage: "checkmark.circle.fill"
                 )
                 .font(.subheadline)

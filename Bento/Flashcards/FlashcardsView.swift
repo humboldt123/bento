@@ -323,11 +323,7 @@ struct CardFace: View {
     var body: some View {
         if card.isInteractive, let payload = card.payload {
             VStack(alignment: .leading, spacing: 10) {
-                if let tag = card.tag {
-                    Text(tag.uppercased())
-                        .font(.caption2.bold())
-                        .foregroundStyle(.secondary)
-                }
+                CardHeader(card: card)
                 if let image = card.image { CardImage(url: image) }
                 // Interactive cards are answered, not flipped: showBack means "show it solved"
                 CardEngine(payload: payload, reveal: showBack, height: $engineHeight) { onResult?($0) }
@@ -342,11 +338,7 @@ struct CardFace: View {
 
     private var flipFace: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if let tag = card.tag {
-                Text(tag.uppercased())
-                    .font(.caption2.bold())
-                    .foregroundStyle(.secondary)
-            }
+            CardHeader(card: card)
             MathText(card.front, size: 22, bold: true)
             if let image = card.image, card.imageOnFront { CardImage(url: image) }
 
@@ -363,6 +355,103 @@ struct CardFace: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+}
+
+/// Tag on the left, flag button on the right
+private struct CardHeader: View {
+    let card: Flashcard
+    @State private var flagging = false
+    private var store: DeckStore { DeckStore.shared }
+
+    var body: some View {
+        let flagged = store.flags[card.id] != nil
+        HStack {
+            if let tag = card.tag {
+                Text(tag.uppercased())
+                    .font(.caption2.bold())
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button {
+                flagging = true
+            } label: {
+                Image(systemName: flagged ? "flag.fill" : "flag")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(flagged ? Color.red : Color.secondary.opacity(0.6))
+                    .frame(width: 32, height: 28, alignment: .trailing)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(flagged ? "Flagged as a bad card" : "Flag as a bad card")
+        }
+        .sheet(isPresented: $flagging) {
+            FlagSheet(card: card, existing: store.flags[card.id])
+                .presentationDetents([.medium])
+        }
+    }
+}
+
+/// "What's wrong with this card?" Saved to Notion for whoever fixes the deck later
+private struct FlagSheet: View {
+    let card: Flashcard
+    let existing: String?
+    @State private var note = ""
+    @Environment(\.dismiss) private var dismiss
+
+    private let quick = ["Wrong answer", "Unclear question", "Too easy", "Too long", "Bad picture", "Formatting broken"]
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text(TeXPlain.convert(card.front.components(separatedBy: "\n").first ?? card.front))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                    Text("What's wrong? (optional)").font(.headline)
+                    TextField("e.g. the answer should mention…", text: $note, axis: .vertical)
+                        .lineLimit(3...6)
+                        .padding(12)
+                        .bentoCard(cornerRadius: 14)
+                    FlowLayout(spacing: 8) {
+                        ForEach(quick, id: \.self) { q in
+                            Button {
+                                note = note.isEmpty ? q : note + "; " + q
+                            } label: {
+                                Text(q)
+                                    .font(.caption.bold())
+                                    .padding(.horizontal, 12).padding(.vertical, 7)
+                                    .overlay(Capsule().stroke(Color.primary, lineWidth: 1.2))
+                                    .contentShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    if existing != nil {
+                        Button("Unflag", role: .destructive) {
+                            DeckStore.shared.setFlag(cardId: card.id, feedback: nil)
+                            dismiss()
+                        }
+                        .padding(.top, 6)
+                    }
+                }
+                .padding(20)
+            }
+            .background(Color.bentoPaper.ignoresSafeArea())
+            .navigationTitle(existing == nil ? "Flag this card" : "Flagged")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(existing == nil ? "Flag" : "Save") {
+                        DeckStore.shared.setFlag(cardId: card.id, feedback: note.trimmingCharacters(in: .whitespacesAndNewlines))
+                        dismiss()
+                    }
+                }
+            }
+            .onAppear { note = existing ?? "" }
+        }
+    }
 }
 
 /// A card's picture on a white plate (diagrams are drawn for white), tap to see it full screen

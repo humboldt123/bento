@@ -16,6 +16,9 @@ final class DeckStore {
 
     /// Card id -> Notion page id, for writing progress back
     private var pageIds: [String: String] = [:]
+    /// Cards marked bad in the app: card id -> feedback ("" if none). Lives in Notion (Flagged, Feedback)
+    /// so future Claudes can fix them.
+    private(set) var flags: [String: String] = [:]
 
     private static var cacheURL: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -28,6 +31,7 @@ final class DeckStore {
            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             decks = (root["decks"] as? [[String: Any]] ?? []).map(DeckJSON.deck)
             pageIds = root["pageIds"] as? [String: String] ?? [:]
+            flags = root["flags"] as? [String: String] ?? [:]
         }
     }
 
@@ -54,6 +58,7 @@ final class DeckStore {
 
             var byDeck: [String: [[String: Any]]] = [:]
             var ids: [String: String] = [:]
+            var flagged: [String: String] = [:]
             for page in cardPages {
                 guard let deckId = page.select("Deck"),
                       var card = (try? JSONSerialization.jsonObject(with: Data(page.text("Data").utf8))) as? [String: Any] else { continue }
@@ -63,6 +68,7 @@ final class DeckStore {
                 if let image = page.url("Image"), !image.isEmpty { card["image"] = image }
                 byDeck[deckId, default: []].append(card)
                 ids[cardId] = page.id
+                if page.checkbox("Flagged") { flagged[cardId] = page.text("Feedback") }
                 StudyProgress.shared.merge(cardId: cardId, box: page.number("Box").map(Int.init),
                                            due: page.date("Due"), reviewed: page.date("Reviewed"))
             }
@@ -73,13 +79,26 @@ final class DeckStore {
             }
             decks = raw.map(DeckJSON.deck)
             pageIds = ids
+            flags = flagged
             problem = nil
             lastRefresh = .now
-            if let data = try? JSONSerialization.data(withJSONObject: ["decks": raw, "pageIds": ids]) {
+            if let data = try? JSONSerialization.data(withJSONObject: ["decks": raw, "pageIds": ids, "flags": flagged]) {
                 try? data.write(to: Self.cacheURL, options: .atomic)
             }
         } catch {
             problem = error.localizedDescription
+        }
+    }
+
+    /// Marks a card as bad (with optional feedback) in Notion, or clears it with nil
+    func setFlag(cardId: String, feedback: String?) {
+        if let feedback { flags[cardId] = feedback } else { flags[cardId] = nil }
+        guard let page = pageIds[cardId], let api = NotionAPI() else { return }
+        Task {
+            try? await api.update(page: page, properties: [
+                "Flagged": ["checkbox": feedback != nil],
+                "Feedback": NotionAPI.richText(feedback ?? ""),
+            ])
         }
     }
 

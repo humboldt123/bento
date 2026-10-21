@@ -495,8 +495,8 @@ struct SetEntrySheet: View {
     }
 }
 
-/// Weight: one line per rep band (heaviest set of 7–9s, of 12+, …), colored along a red → purple
-/// gradient by reps, heavier lines drawn on top. Other tabs: one value per session (est. 1RM, most
+/// Weight: one line per rep band (heaviest set of 7–9s, of 12+, …), black dots, lines grayer for
+/// fewer reps, heavier lines drawn on top. Lines stop at breaks longer than three weeks. Other tabs: one value per session (est. 1RM, most
 /// reps or volume) as a filled line. Sessions sit
 /// one step apart and a break widens the step logarithmically, so a 3-month gap shows without
 /// eating the width. Tap a point for that day.
@@ -585,54 +585,50 @@ struct ProgressChart: View {
 
     static func band(_ reps: Int) -> Int { bands.last { $0 <= reps } ?? 1 }
 
-    static func bandName(_ b: Int) -> String {
-        guard let i = bands.firstIndex(of: b) else { return "\(b)" }
-        if i == bands.count - 1 { return "\(b)+" }
-        let hi = bands[i + 1] - 1
-        return hi == b ? "\(b)" : "\(b)–\(hi)"
-    }
+    /// Sessions further apart than this aren't joined by a line (a straight line would invent the middle)
+    static let maxGapDays = 21.0
 
-    /// One rep band's heaviest set per session, e.g. every time you did 7–9 reps
-    private struct Series: Identifiable {
-        var id: Int { band }
+    /// A run of one rep band's heaviest set per session, with no long break inside it
+    private struct Segment: Identifiable {
+        let id: String
         let band: Int
-        let points: [(x: Double, weight: Double)]
+        let points: [(x: Double, y: Double)]
     }
 
-    private static func series(_ days: [Day]) -> [Series] {
-        var byBand: [Int: [(x: Double, weight: Double)]] = [:]
+    /// Splits (date, x, y) points wherever two neighbours are more than maxGapDays apart
+    private static func segments(_ pts: [(date: Date, x: Double, y: Double)], band: Int) -> [Segment] {
+        var out: [Segment] = []
+        var run: [(x: Double, y: Double)] = []
+        var prev: Date?
+        for p in pts {
+            if let prev, p.date.timeIntervalSince(prev) / 86_400 > maxGapDays {
+                out.append(Segment(id: "\(band)-\(out.count)", band: band, points: run))
+                run = []
+            }
+            run.append((p.x, p.y))
+            prev = p.date
+        }
+        if !run.isEmpty { out.append(Segment(id: "\(band)-\(out.count)", band: band, points: run)) }
+        return out
+    }
+
+    /// Weight tab: per rep band, its heaviest set each session. Lightest bands first, so heavier
+    /// lines draw on top
+    private static func bandSegments(_ days: [Day]) -> [Segment] {
+        var byBand: [Int: [(date: Date, x: Double, y: Double)]] = [:]
         for d in days {
             for b in Set(d.sets.map { band($0.reps) }) {
                 let w = d.sets.filter { band($0.reps) == b }.map(\.weight).max()!
-                byBand[b, default: []].append((d.x, w))
+                byBand[b, default: []].append((d.date, d.x, w))
             }
         }
-        // Lightest first, so heavier lines draw over lighter ones
-        return byBand.map { Series(band: $0.key, points: $0.value) }
-            .sorted { avg($0) < avg($1) }
+        func avg(_ pts: [(date: Date, x: Double, y: Double)]) -> Double { pts.map(\.y).reduce(0, +) / Double(pts.count) }
+        return byBand.sorted { avg($0.value) < avg($1.value) }.flatMap { segments($0.value, band: $0.key) }
     }
 
-    private static func avg(_ s: Series) -> Double { s.points.map(\.weight).reduce(0, +) / Double(s.points.count) }
-
-    /// Rep band → color, interpolated along the hue wheel by rep count: 1 red, 4 orange, 7 green,
-    /// 10 blue, 12+ purple. The curve ($t^{1.6}$) keeps low reps in the warm colors
-    static func repColor(_ band: Int) -> Color {
-        let t = pow(Double(min(band, 12) - 1) / 11, 1.6)
-        return Color(hue: 0.78 * t, saturation: 0.8, brightness: 0.78)
-    }
-
-    /// End-of-line labels; lines ending on the same spot share one ("10–11 · 12+")
-    private static func endLabels(_ lines: [Series]) -> [Int: String] {
-        var byEnd: [String: [Int]] = [:]
-        for l in lines { if let e = l.points.last { byEnd["\(e.x)|\(e.weight)", default: []].append(l.band) } }
-        var out: [Int: String] = [:]
-        for bands in byEnd.values {
-            // Label sits on the line drawn last (the heaviest), listing every band ending there
-            if let top = lines.last(where: { bands.contains($0.band) }) {
-                out[top.band] = bands.sorted().map(bandName).joined(separator: " · ")
-            }
-        }
-        return out
+    /// Line gray by rep band: fewer reps lighter, 12+ darkest
+    static func lineShade(_ band: Int) -> Double {
+        0.2 + 0.6 * Double(bands.firstIndex(of: band) ?? 0) / Double(bands.count - 1)
     }
 
     var body: some View {
@@ -643,8 +639,9 @@ struct ProgressChart: View {
         } else {
             let m = shownMetric
             let bySeries = m == .weight
-            let lines = bySeries ? Self.series(days) : []
-            let labels = Self.endLabels(lines)
+            let lines = bySeries
+                ? Self.bandSegments(days)
+                : Self.segments(days.map { ($0.date, $0.x, $0.value(m)) }, band: 12)
             let values = bySeries ? days.flatMap { $0.sets.map(\.weight) } : days.map { $0.value(m) }
             let lo = values.min()!, hi = values.max()!
             let pad = max(m == .reps ? 1 : 5, (hi - lo) * 0.15)
@@ -687,38 +684,17 @@ struct ProgressChart: View {
                 }
 
                 Chart {
-                    if bySeries {
-                        ForEach(lines) { line in
-                            let color = Self.repColor(line.band)
-                            ForEach(Array(line.points.enumerated()), id: \.offset) { k, pt in
-                                AreaMark(x: .value("Session", pt.x), yStart: .value("min", yMin), yEnd: .value("lb", pt.weight),
-                                         series: .value("Reps", line.band))
-                                    .foregroundStyle(LinearGradient(colors: [color.opacity(0.12), color.opacity(0.0)],
-                                                                    startPoint: .top, endPoint: .bottom))
-                                LineMark(x: .value("Session", pt.x), y: .value("lb", pt.weight), series: .value("Reps", line.band))
-                                    .foregroundStyle(color)
-                                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-                                PointMark(x: .value("Session", pt.x), y: .value("lb", pt.weight))
-                                    .foregroundStyle(color)
-                                    .symbolSize(28)
-                                    .annotation(position: .trailing, spacing: 3) {
-                                        // Rep band once, at the end of each line
-                                        if k == line.points.count - 1, let label = labels[line.band] {
-                                            Text(label)
-                                                .font(.system(size: 9, weight: .bold)).foregroundStyle(color)
-                                        }
-                                    }
-                            }
-                        }
-                    } else {
-                        ForEach(days) { d in
-                            AreaMark(x: .value("Session", d.x), yStart: .value("min", yMin), yEnd: .value(unit, d.value(m)))
-                                .foregroundStyle(LinearGradient(colors: [Color.primary.opacity(0.14), Color.primary.opacity(0.02)],
+                    ForEach(lines) { seg in
+                        let ink = Color.primary.opacity(bySeries ? Self.lineShade(seg.band) : 1)
+                        ForEach(Array(seg.points.enumerated()), id: \.offset) { _, pt in
+                            AreaMark(x: .value("Session", pt.x), yStart: .value("min", yMin), yEnd: .value("lb", pt.y),
+                                     series: .value("Line", seg.id))
+                                .foregroundStyle(LinearGradient(colors: [Color.primary.opacity(bySeries ? 0.06 : 0.14), .clear],
                                                                 startPoint: .top, endPoint: .bottom))
-                            LineMark(x: .value("Session", d.x), y: .value(unit, d.value(m)))
-                                .foregroundStyle(Color.primary)
-                                .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
-                            PointMark(x: .value("Session", d.x), y: .value(unit, d.value(m)))
+                            LineMark(x: .value("Session", pt.x), y: .value("lb", pt.y), series: .value("Line", seg.id))
+                                .foregroundStyle(ink)
+                                .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                            PointMark(x: .value("Session", pt.x), y: .value("lb", pt.y))
                                 .foregroundStyle(Color.primary)
                                 .symbolSize(30)
                         }
@@ -729,7 +705,7 @@ struct ProgressChart: View {
                             .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
                     }
                 }
-                .chartXScale(domain: -0.3...(xMax + (bySeries ? 1.2 : 0.3)))
+                .chartXScale(domain: -0.3...(xMax + 0.3))
                 .chartYScale(domain: yMin...yMax)
                 .chartXAxis(.hidden)
                 .chartYAxis {

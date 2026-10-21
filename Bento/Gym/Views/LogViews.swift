@@ -385,7 +385,6 @@ struct SetEntrySheet: View {
         VStack(spacing: 0) {
             ForEach(Array(done.enumerated()), id: \.element.id) { i, set in
                 HStack {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.bentoActivity)
                     Text("Set \(i + 1)").foregroundStyle(.secondary)
                     Spacer()
                     Text(WorkoutEngine.label(set, bodyweight: bodyweight, long: true))
@@ -496,9 +495,9 @@ struct SetEntrySheet: View {
     }
 }
 
-/// Top set per session, each dot shaded by its reps (lighter = fewer). Sessions sit one step apart;
-/// long breaks only widen the step a little, so the gap shows without eating the width.
-/// Tap a dot for its date, weight and reps.
+/// Every set from the last 14 sessions, one column per session, shaded by reps (lighter = fewer), so
+/// each rep target reads as its own track without trend lines. Sets with the same weight on the same
+/// day stack, darkest on top. Long breaks only widen the step a little. Tap a column for that day.
 struct ProgressChart: View {
     let exercise: ExerciseDefinition
     let gym: Gym?
@@ -507,11 +506,17 @@ struct ProgressChart: View {
 
     @State private var selected: Int?
 
-    private struct Point: Identifiable {
-        var id: Int { index }
+    private struct Day {
         let index: Int
         let x: Double
         let date: Date
+        let sets: [(weight: Double, reps: Int)]
+    }
+
+    private struct Dot: Identifiable {
+        let id: Int
+        let day: Int
+        let x: Double
         let weight: Double
         let reps: Int
     }
@@ -522,81 +527,97 @@ struct ProgressChart: View {
         return Color(hue: 0.39, saturation: 0.35 + 0.55 * t, brightness: 0.85 - 0.5 * t)
     }
 
-    /// Last 14 sessions' top sets (this gym for machines), plus today's sets if they aren't saved yet
-    private func makePoints() -> [Point] {
-        let gymName = WorkoutEngine.isGymSpecific(exercise) ? gym?.name : nil
-        let past = WorkoutEngine.exerciseHistory(exerciseId: exercise.id, sessions: history, gymName: gymName).suffix(14)
-        var raw = past.map { ($0.date, $0.topWeight, $0.topReps) }
-        let todays = today.compactMap { s in s.weight.flatMap { w in s.reps.map { (w, $0) } } }
-        if let t = todays.max(by: { ($0.0, $0.1) < ($1.0, $1.1) }),
-           !raw.contains(where: { Calendar.current.isDateInToday($0.0) }) {
-            raw.append((.now, t.0, t.1))
+    private static func working(_ sets: [WorkoutSet]) -> [(weight: Double, reps: Int)] {
+        sets.filter { !$0.isPlanned }.compactMap { s in
+            guard let w = s.weight, w > 0, let r = s.reps, r > 0 else { return nil }
+            return (w, r)
         }
-        var points: [Point] = []
+    }
+
+    /// Last 14 sessions (this gym for machines), plus today's sets if they aren't saved yet
+    private func makeDays() -> [Day] {
+        let gymName = WorkoutEngine.isGymSpecific(exercise) ? gym?.name : nil
+        var raw: [(Date, [(weight: Double, reps: Int)])] = history
+            .filter { gymName == nil || $0.gymName == gymName }
+            .sorted { $0.date < $1.date }
+            .compactMap { session in
+                guard let entry = session.entries.first(where: { $0.exerciseId == exercise.id }) else { return nil }
+                let sets = Self.working(entry.sets)
+                return sets.isEmpty ? nil : (session.date, sets)
+            }
+            .suffix(14)
+        let todays = Self.working(today)
+        if !todays.isEmpty, !raw.contains(where: { Calendar.current.isDateInToday($0.0) }) {
+            raw.append((.now, todays))
+        }
+        var days: [Day] = []
         var x = 0.0
         for (i, r) in raw.enumerated() {
-            if let prev = points.last {
+            if let prev = days.last {
                 let weeks = r.0.timeIntervalSince(prev.date) / 604_800
                 x += 1 + min(1.5, max(0, weeks - 2) * 0.15)
             }
-            points.append(Point(index: i, x: x, date: r.0, weight: r.1, reps: r.2))
+            days.append(Day(index: i, x: x, date: r.0, sets: r.1))
         }
-        return points
+        return days
     }
 
-    private static func strength(_ p: Point) -> Double { p.weight * (1 + Double(min(p.reps, 15)) / 30) }
+    private static func strength(_ s: (weight: Double, reps: Int)) -> Double { s.weight * (1 + Double(min(s.reps, 15)) / 30) }
 
     private static func day(_ d: Date) -> String {
         Calendar.current.isDateInToday(d) ? "Today" : d.formatted(.dateTime.month(.abbreviated).day())
     }
 
     var body: some View {
-        let points = makePoints()
+        let days = makeDays()
+        // Fewer reps drawn first, so the darkest dot ends up on top of a stack
+        let dots = days.flatMap { d in d.sets.map { (d, $0) } }
+            .sorted { $0.1.reps < $1.1.reps }
+            .enumerated()
+            .map { Dot(id: $0, day: $1.0.index, x: $1.0.x, weight: $1.1.weight, reps: $1.1.reps) }
 
-        if WorkoutEngine.isBodyweight(exercise) || points.count < 2 {
+        if WorkoutEngine.isBodyweight(exercise) || days.count < 2 {
             EmptyView()
         } else {
-            let lo = points.map(\.weight).min()!, hi = points.map(\.weight).max()!
+            let lo = dots.map(\.weight).min()!, hi = dots.map(\.weight).max()!
             let pad = max(5, (hi - lo) * 0.18)
             let yMin = max(0, ((lo - pad) / 5).rounded(.down) * 5)
             let yMax = ((hi + pad) / 5).rounded(.up) * 5
-            let repLo = points.map(\.reps).min()!, repHi = points.map(\.reps).max()!
-            let xMax = points.last!.x
-            let shown = selected.flatMap { i in points.first { $0.index == i } }
-            let best = points.max { Self.strength($0) < Self.strength($1) }!
+            let repLo = dots.map(\.reps).min()!, repHi = dots.map(\.reps).max()!
+            let xMax = days.last!.x
+            let shown = selected.flatMap { i in days.first { $0.index == i } }
+            let best = days.flatMap(\.sets).max { Self.strength($0) < Self.strength($1) }!
 
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("Top set").font(.headline)
+                    Text("Sets").font(.headline)
                     Spacer()
-                    let p = shown ?? best
-                    Text("\(shown == nil ? "best" : Self.day(p.date)) · \(p.weight.clean) lb × \(p.reps)")
-                        .font(.subheadline.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(shown == nil ? .secondary : .primary)
+                    Group {
+                        if let d = shown {
+                            Text("\(Self.day(d.date)) · \(d.sets.map { "\($0.weight.clean)×\($0.reps)" }.joined(separator: ", "))")
+                        } else {
+                            Text("best · \(best.weight.clean) lb × \(best.reps)").foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                 }
 
                 Chart {
-                    ForEach(points) { p in
-                        LineMark(x: .value("Session", p.x), y: .value("lb", p.weight))
-                            .foregroundStyle(Color.primary.opacity(0.25))
-                            .lineStyle(StrokeStyle(lineWidth: 2))
+                    if let d = shown {
+                        RectangleMark(x: .value("Session", d.x), width: 22)
+                            .foregroundStyle(Color.primary.opacity(0.06))
                     }
-                    ForEach(points) { p in
-                        PointMark(x: .value("Session", p.x), y: .value("lb", p.weight))
-                            .foregroundStyle(Self.shade(p.reps, lo: repLo, hi: repHi))
-                            .symbolSize(p.index == selected ? 160 : 85)
+                    ForEach(dots) { dot in
+                        PointMark(x: .value("Session", dot.x), y: .value("lb", dot.weight))
+                            .foregroundStyle(Self.shade(dot.reps, lo: repLo, hi: repHi))
+                            .symbolSize(85)
                     }
                 }
                 .chartXScale(domain: -0.4...(xMax + 0.4))
                 .chartYScale(domain: yMin...yMax)
-                .chartXAxis {
-                    AxisMarks(values: [0.0]) { _ in
-                        AxisValueLabel(anchor: .topLeading) { Text(Self.day(points.first!.date)) }
-                    }
-                    AxisMarks(values: [xMax]) { _ in
-                        AxisValueLabel(anchor: .topTrailing) { Text(Self.day(points.last!.date)) }
-                    }
-                }
+                .chartXAxis(.hidden)
                 .chartYAxis {
                     AxisMarks(position: .trailing, values: .automatic(desiredCount: 4)) {
                         AxisGridLine().foregroundStyle(Color.primary.opacity(0.07))
@@ -609,7 +630,7 @@ struct ProgressChart: View {
                             .onTapGesture { location in
                                 guard let frame = proxy.plotFrame,
                                       let x: Double = proxy.value(atX: location.x - geo[frame].origin.x),
-                                      let near = points.min(by: { abs($0.x - x) < abs($1.x - x) }) else { return }
+                                      let near = days.min(by: { abs($0.x - x) < abs($1.x - x) }) else { return }
                                 selected = selected == near.index ? nil : near.index
                             }
                     }

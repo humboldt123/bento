@@ -85,11 +85,19 @@ enum LogImporter {
         var count = 0
 
         // A day already here (e.g. a workout planned on this device) still takes sets logged elsewhere:
-        // remote sets fill in sets that are only planned here, never overwrite ones you did
+        // remote sets fill in sets that are only planned here, never overwrite ones you did, and
+        // exercises missing here are added
         for day in days where loggedDays.contains(calendar.startOfDay(for: day.date)) {
             guard let session = existing.first(where: { calendar.isDate($0.date, inSameDayAs: day.date) }) else { continue }
             for parsed in day.entries {
-                guard let ex = parsed.exercise, let entry = session.entries.first(where: { $0.exerciseId == ex.id }) else { continue }
+                guard let ex = parsed.exercise else { continue }
+                // An exercise logged elsewhere (or added in Notion) joins the day
+                guard let entry = session.entries.first(where: { $0.exerciseId == ex.id }) else {
+                    let entry = WorkoutEntry(exerciseId: ex.id, order: session.entries.count)
+                    session.entries.append(entry)
+                    for (j, s) in parsed.sets.enumerated() { entry.sets.append(WorkoutSet(order: j, weight: s.weight, reps: s.reps)) }
+                    continue
+                }
                 let done = entry.sets.filter { !$0.isPlanned }.count
                 guard parsed.sets.count > done else { continue }
                 let planned = entry.sets.filter(\.isPlanned).sorted { $0.order < $1.order }

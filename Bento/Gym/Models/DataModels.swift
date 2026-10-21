@@ -130,6 +130,7 @@ final class Gym {
     /// Marks plus equipment rules (e.g. home only has one dumbbell)
     func allows(_ exercise: ExerciseDefinition) -> Bool {
         guard isAvailable(exercise.id) else { return false }
+        if Self.noGear.contains(exercise.id) { return true }
         if availableExerciseIds.contains(exercise.id) { return true }
         if !allowedEquipmentIds.isEmpty,
            !exercise.equipmentIds.allSatisfy({ allowedEquipmentIds.contains($0) }) {
@@ -143,8 +144,15 @@ final class Gym {
 
     /// Stricter than `allows`, for suggestions: once a gym has a confirmed list, only confirmed
     /// exercises are suggested (blank equipment would otherwise allow everything)
+    /// Floor ab work needs no equipment, so every gym has it (decline sit-ups and machines don't count)
+    static let noGear: Set<String> = [
+        "my-plank", "my-side-plank", "my-dead-bug", "my-oblique-crunch", "my-russian-twist", "my-hollow-hold",
+        "my-leg-raise-lying", "my-mountain-climber", "my-bicycle-crunch", "my-sit-up", "my-v-up",
+    ]
+
     func suggests(_ exercise: ExerciseDefinition) -> Bool {
         guard allows(exercise) else { return false }
+        if Self.noGear.contains(exercise.id) { return true }
         if !availableExerciseIds.isEmpty, allowedEquipmentIds.isEmpty {
             return availableExerciseIds.contains(exercise.id)
         }

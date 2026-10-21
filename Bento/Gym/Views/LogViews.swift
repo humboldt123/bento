@@ -495,7 +495,9 @@ struct SetEntrySheet: View {
     }
 }
 
-/// One value per session (best weight, est. 1RM, most reps or volume) as a filled line. Sessions sit
+/// Weight: one line per rep band (heaviest set of 7–9s, of 12+, …), colored along a red → purple
+/// gradient by reps, heavier lines drawn on top. Other tabs: one value per session (est. 1RM, most
+/// reps or volume) as a filled line. Sessions sit
 /// one step apart and a break widens the step logarithmically, so a 3-month gap shows without
 /// eating the width. Tap a point for that day.
 struct ProgressChart: View {
@@ -578,6 +580,61 @@ struct ProgressChart: View {
 
     private var unit: String { shownMetric == .reps ? "reps" : "lb" }
 
+    /// Rep bands, so 11s and 12s don't each get a line: lower bound of each band
+    static let bands = [1, 4, 7, 10, 12]
+
+    static func band(_ reps: Int) -> Int { bands.last { $0 <= reps } ?? 1 }
+
+    static func bandName(_ b: Int) -> String {
+        guard let i = bands.firstIndex(of: b) else { return "\(b)" }
+        if i == bands.count - 1 { return "\(b)+" }
+        let hi = bands[i + 1] - 1
+        return hi == b ? "\(b)" : "\(b)–\(hi)"
+    }
+
+    /// One rep band's heaviest set per session, e.g. every time you did 7–9 reps
+    private struct Series: Identifiable {
+        var id: Int { band }
+        let band: Int
+        let points: [(x: Double, weight: Double)]
+    }
+
+    private static func series(_ days: [Day]) -> [Series] {
+        var byBand: [Int: [(x: Double, weight: Double)]] = [:]
+        for d in days {
+            for b in Set(d.sets.map { band($0.reps) }) {
+                let w = d.sets.filter { band($0.reps) == b }.map(\.weight).max()!
+                byBand[b, default: []].append((d.x, w))
+            }
+        }
+        // Lightest first, so heavier lines draw over lighter ones
+        return byBand.map { Series(band: $0.key, points: $0.value) }
+            .sorted { avg($0) < avg($1) }
+    }
+
+    private static func avg(_ s: Series) -> Double { s.points.map(\.weight).reduce(0, +) / Double(s.points.count) }
+
+    /// Rep band → color, interpolated along the hue wheel by rep count: 1 red, 4 orange, 7 green,
+    /// 10 blue, 12+ purple. The curve ($t^{1.6}$) keeps low reps in the warm colors
+    static func repColor(_ band: Int) -> Color {
+        let t = pow(Double(min(band, 12) - 1) / 11, 1.6)
+        return Color(hue: 0.78 * t, saturation: 0.8, brightness: 0.78)
+    }
+
+    /// End-of-line labels; lines ending on the same spot share one ("10–11 · 12+")
+    private static func endLabels(_ lines: [Series]) -> [Int: String] {
+        var byEnd: [String: [Int]] = [:]
+        for l in lines { if let e = l.points.last { byEnd["\(e.x)|\(e.weight)", default: []].append(l.band) } }
+        var out: [Int: String] = [:]
+        for bands in byEnd.values {
+            // Label sits on the line drawn last (the heaviest), listing every band ending there
+            if let top = lines.last(where: { bands.contains($0.band) }) {
+                out[top.band] = bands.sorted().map(bandName).joined(separator: " · ")
+            }
+        }
+        return out
+    }
+
     var body: some View {
         let days = makeDays()
 
@@ -585,14 +642,18 @@ struct ProgressChart: View {
             EmptyView()
         } else {
             let m = shownMetric
-            let values = days.map { $0.value(m) }
+            let bySeries = m == .weight
+            let lines = bySeries ? Self.series(days) : []
+            let labels = Self.endLabels(lines)
+            let values = bySeries ? days.flatMap { $0.sets.map(\.weight) } : days.map { $0.value(m) }
             let lo = values.min()!, hi = values.max()!
             let pad = max(m == .reps ? 1 : 5, (hi - lo) * 0.15)
             let yMin = max(0, lo - pad)
             let yMax = hi + pad
             let xMax = days.last!.x
             let shown = selected.flatMap { i in days.first { $0.index == i } } ?? days.last!
-            let delta = shown.value(m) - values[0]
+            let delta = shown.value(m) - days[0].value(m)
+            let bestSet = shown.sets.max { ($0.weight, $0.reps) < ($1.weight, $1.reps) }!
 
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
@@ -609,30 +670,66 @@ struct ProgressChart: View {
                         }
                     }
                     Spacer()
-                    Text(format(shown.value(m)))
-                        .font(.system(size: 30, weight: .bold).monospacedDigit())
-                    Text(unit).font(.subheadline).foregroundStyle(.secondary)
-                    if delta != 0 {
-                        Text("\(delta > 0 ? "+" : "−")\(format(abs(delta)))")
-                            .font(.subheadline.weight(.semibold).monospacedDigit())
-                            .foregroundStyle(delta > 0 ? Color.bentoActivity : .red)
+                    if bySeries {
+                        Text(bestSet.weight.clean)
+                            .font(.system(size: 30, weight: .bold).monospacedDigit())
+                        Text("lb × \(bestSet.reps)").font(.subheadline).foregroundStyle(.secondary)
+                    } else {
+                        Text(format(shown.value(m)))
+                            .font(.system(size: 30, weight: .bold).monospacedDigit())
+                        Text(unit).font(.subheadline).foregroundStyle(.secondary)
+                        if delta != 0 {
+                            Text("\(delta > 0 ? "+" : "−")\(format(abs(delta)))")
+                                .font(.subheadline.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(delta > 0 ? Color.bentoActivity : .red)
+                        }
                     }
                 }
 
                 Chart {
-                    ForEach(days) { d in
-                        AreaMark(x: .value("Session", d.x), yStart: .value("min", yMin), yEnd: .value(unit, d.value(m)))
-                            .foregroundStyle(LinearGradient(colors: [Color.primary.opacity(0.14), Color.primary.opacity(0.02)],
-                                                            startPoint: .top, endPoint: .bottom))
-                        LineMark(x: .value("Session", d.x), y: .value(unit, d.value(m)))
-                            .foregroundStyle(Color.primary)
-                            .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
-                        PointMark(x: .value("Session", d.x), y: .value(unit, d.value(m)))
-                            .foregroundStyle(Color.primary)
-                            .symbolSize(d.index == selected ? 110 : 30)
+                    if bySeries {
+                        ForEach(lines) { line in
+                            let color = Self.repColor(line.band)
+                            ForEach(Array(line.points.enumerated()), id: \.offset) { k, pt in
+                                AreaMark(x: .value("Session", pt.x), yStart: .value("min", yMin), yEnd: .value("lb", pt.weight),
+                                         series: .value("Reps", line.band))
+                                    .foregroundStyle(LinearGradient(colors: [color.opacity(0.12), color.opacity(0.0)],
+                                                                    startPoint: .top, endPoint: .bottom))
+                                LineMark(x: .value("Session", pt.x), y: .value("lb", pt.weight), series: .value("Reps", line.band))
+                                    .foregroundStyle(color)
+                                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                                PointMark(x: .value("Session", pt.x), y: .value("lb", pt.weight))
+                                    .foregroundStyle(color)
+                                    .symbolSize(28)
+                                    .annotation(position: .trailing, spacing: 3) {
+                                        // Rep band once, at the end of each line
+                                        if k == line.points.count - 1, let label = labels[line.band] {
+                                            Text(label)
+                                                .font(.system(size: 9, weight: .bold)).foregroundStyle(color)
+                                        }
+                                    }
+                            }
+                        }
+                    } else {
+                        ForEach(days) { d in
+                            AreaMark(x: .value("Session", d.x), yStart: .value("min", yMin), yEnd: .value(unit, d.value(m)))
+                                .foregroundStyle(LinearGradient(colors: [Color.primary.opacity(0.14), Color.primary.opacity(0.02)],
+                                                                startPoint: .top, endPoint: .bottom))
+                            LineMark(x: .value("Session", d.x), y: .value(unit, d.value(m)))
+                                .foregroundStyle(Color.primary)
+                                .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                            PointMark(x: .value("Session", d.x), y: .value(unit, d.value(m)))
+                                .foregroundStyle(Color.primary)
+                                .symbolSize(30)
+                        }
+                    }
+                    if let i = selected, let d = days.first(where: { $0.index == i }) {
+                        RuleMark(x: .value("Session", d.x))
+                            .foregroundStyle(Color.primary.opacity(0.25))
+                            .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
                     }
                 }
-                .chartXScale(domain: -0.3...(xMax + 0.3))
+                .chartXScale(domain: -0.3...(xMax + (bySeries ? 1.2 : 0.3)))
                 .chartYScale(domain: yMin...yMax)
                 .chartXAxis(.hidden)
                 .chartYAxis {
@@ -652,7 +749,7 @@ struct ProgressChart: View {
                             }
                     }
                 }
-                .frame(height: 190)
+                .frame(height: 210)
 
                 if metrics.count > 1 {
                     HStack(spacing: 8) {

@@ -495,11 +495,10 @@ struct SetEntrySheet: View {
     }
 }
 
-/// Weight: one line per rep band (heaviest set of 7–9s, of 12+, …), black dots, lines grayer for
-/// fewer reps, heavier lines drawn on top. Lines stop at breaks longer than three weeks. Other tabs: one value per session (est. 1RM, most
-/// reps or volume) as a filled line. Sessions sit
-/// one step apart and a break widens the step logarithmically, so a 3-month gap shows without
-/// eating the width. Tap a point for that day.
+/// One black line per exercise: by default each session's best set converted to the weight you
+/// could do for 12 (the top of the rep range), so 75×11 to failure, 75×12 and 95×4 all land on the
+/// same scale. Sessions sit one step apart and a break widens the step logarithmically; the line
+/// stops at breaks longer than three weeks. Tap a point for that day's sets.
 struct ProgressChart: View {
     let exercise: ExerciseDefinition
     let gym: Gym?
@@ -507,10 +506,10 @@ struct ProgressChart: View {
     let today: [WorkoutSet]
 
     enum Metric: String, CaseIterable {
-        case weight = "Weight", oneRM = "1RM", reps = "Reps", volume = "Volume"
+        case strength = "For 12", weight = "Top weight", volume = "Volume", reps = "Reps"
     }
 
-    @AppStorage("progressMetric") private var metric: Metric = .weight
+    @AppStorage("progressMetric2") private var metric: Metric = .strength
     @State private var selected: Int?
 
     private struct Day: Identifiable {
@@ -522,8 +521,10 @@ struct ProgressChart: View {
 
         func value(_ m: Metric) -> Double {
             switch m {
+            // Best set converted to the weight you could do for 12 (Epley, 1985):
+            // $w_{12} = w\,(1 + \min(r, 15)/30) \,/\, (1 + 12/30)$
+            case .strength: sets.map { $0.weight * (1 + Double(min($0.reps, 15)) / 30) }.max().map { $0 / 1.4 } ?? 0
             case .weight: sets.map(\.weight).max() ?? 0
-            case .oneRM: sets.map { $0.weight * (1 + Double(min($0.reps, 15)) / 30) }.max() ?? 0
             case .reps: Double(sets.map(\.reps).max() ?? 0)
             case .volume: sets.reduce(0) { $0 + $1.weight * Double($1.reps) }
             }
@@ -531,7 +532,7 @@ struct ProgressChart: View {
     }
 
     private var bodyweight: Bool { WorkoutEngine.isBodyweight(exercise) }
-    private var metrics: [Metric] { bodyweight ? [.reps] : Metric.allCases }
+    private var metrics: [Metric] { bodyweight ? [.reps] : [.strength, .weight, .volume] }
     private var shownMetric: Metric { metrics.contains(metric) ? metric : metrics[0] }
 
     private static func working(_ sets: [WorkoutSet]) -> [(weight: Double, reps: Int)] {
@@ -572,63 +573,44 @@ struct ProgressChart: View {
 
     private func format(_ v: Double) -> String {
         switch shownMetric {
-        case .reps: "\(Int(v))"
+        case .reps, .strength: "\(Int(v.rounded()))"
         case .volume: v >= 10_000 ? String(format: "%.1fk", v / 1000) : "\(Int(v.rounded()))"
         default: ((v * 10).rounded() / 10).clean
         }
     }
 
-    private var unit: String { shownMetric == .reps ? "reps" : "lb" }
-
-    /// Rep bands, so 11s and 12s don't each get a line: lower bound of each band
-    static let bands = [1, 4, 7, 10, 12]
-
-    static func band(_ reps: Int) -> Int { bands.last { $0 <= reps } ?? 1 }
+    private var unit: String {
+        switch shownMetric {
+        case .reps: "reps"
+        case .strength: "lb for 12"
+        default: "lb"
+        }
+    }
 
     /// Sessions further apart than this aren't joined by a line (a straight line would invent the middle)
     static let maxGapDays = 21.0
 
-    /// A run of one rep band's heaviest set per session, with no long break inside it
+    /// A run of sessions with no long break inside it
     private struct Segment: Identifiable {
-        let id: String
-        let band: Int
+        let id: Int
         let points: [(x: Double, y: Double)]
     }
 
     /// Splits (date, x, y) points wherever two neighbours are more than maxGapDays apart
-    private static func segments(_ pts: [(date: Date, x: Double, y: Double)], band: Int) -> [Segment] {
+    private static func segments(_ pts: [(date: Date, x: Double, y: Double)]) -> [Segment] {
         var out: [Segment] = []
         var run: [(x: Double, y: Double)] = []
         var prev: Date?
         for p in pts {
             if let prev, p.date.timeIntervalSince(prev) / 86_400 > maxGapDays {
-                out.append(Segment(id: "\(band)-\(out.count)", band: band, points: run))
+                out.append(Segment(id: out.count, points: run))
                 run = []
             }
             run.append((p.x, p.y))
             prev = p.date
         }
-        if !run.isEmpty { out.append(Segment(id: "\(band)-\(out.count)", band: band, points: run)) }
+        if !run.isEmpty { out.append(Segment(id: out.count, points: run)) }
         return out
-    }
-
-    /// Weight tab: per rep band, its heaviest set each session. Lightest bands first, so heavier
-    /// lines draw on top
-    private static func bandSegments(_ days: [Day]) -> [Segment] {
-        var byBand: [Int: [(date: Date, x: Double, y: Double)]] = [:]
-        for d in days {
-            for b in Set(d.sets.map { band($0.reps) }) {
-                let w = d.sets.filter { band($0.reps) == b }.map(\.weight).max()!
-                byBand[b, default: []].append((d.date, d.x, w))
-            }
-        }
-        func avg(_ pts: [(date: Date, x: Double, y: Double)]) -> Double { pts.map(\.y).reduce(0, +) / Double(pts.count) }
-        return byBand.sorted { avg($0.value) < avg($1.value) }.flatMap { segments($0.value, band: $0.key) }
-    }
-
-    /// Line gray by rep band: fewer reps lighter, 12+ darkest
-    static func lineShade(_ band: Int) -> Double {
-        0.2 + 0.6 * Double(bands.firstIndex(of: band) ?? 0) / Double(bands.count - 1)
     }
 
     var body: some View {
@@ -638,11 +620,8 @@ struct ProgressChart: View {
             EmptyView()
         } else {
             let m = shownMetric
-            let bySeries = m == .weight
-            let lines = bySeries
-                ? Self.bandSegments(days)
-                : Self.segments(days.map { ($0.date, $0.x, $0.value(m)) }, band: 12)
-            let values = bySeries ? days.flatMap { $0.sets.map(\.weight) } : days.map { $0.value(m) }
+            let lines = Self.segments(days.map { ($0.date, $0.x, $0.value(m)) })
+            let values = days.map { $0.value(m) }
             let lo = values.min()!, hi = values.max()!
             let pad = max(m == .reps ? 1 : 5, (hi - lo) * 0.15)
             let yMin = max(0, lo - pad)
@@ -650,7 +629,6 @@ struct ProgressChart: View {
             let xMax = days.last!.x
             let shown = selected.flatMap { i in days.first { $0.index == i } } ?? days.last!
             let delta = shown.value(m) - days[0].value(m)
-            let bestSet = shown.sets.max { ($0.weight, $0.reps) < ($1.weight, $1.reps) }!
 
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
@@ -667,32 +645,25 @@ struct ProgressChart: View {
                         }
                     }
                     Spacer()
-                    if bySeries {
-                        Text(bestSet.weight.clean)
-                            .font(.system(size: 30, weight: .bold).monospacedDigit())
-                        Text("lb × \(bestSet.reps)").font(.subheadline).foregroundStyle(.secondary)
-                    } else {
-                        Text(format(shown.value(m)))
-                            .font(.system(size: 30, weight: .bold).monospacedDigit())
-                        Text(unit).font(.subheadline).foregroundStyle(.secondary)
-                        if delta != 0 {
-                            Text("\(delta > 0 ? "+" : "−")\(format(abs(delta)))")
-                                .font(.subheadline.weight(.semibold).monospacedDigit())
-                                .foregroundStyle(delta > 0 ? Color.bentoActivity : .red)
-                        }
+                    Text(format(shown.value(m)))
+                        .font(.system(size: 30, weight: .bold).monospacedDigit())
+                    Text(unit).font(.subheadline).foregroundStyle(.secondary)
+                    if delta != 0 {
+                        Text("\(delta > 0 ? "+" : "−")\(format(abs(delta)))")
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(delta > 0 ? Color.bentoActivity : .red)
                     }
                 }
 
                 Chart {
                     ForEach(lines) { seg in
-                        let ink = Color.primary.opacity(bySeries ? Self.lineShade(seg.band) : 1)
                         ForEach(Array(seg.points.enumerated()), id: \.offset) { _, pt in
                             AreaMark(x: .value("Session", pt.x), yStart: .value("min", yMin), yEnd: .value("lb", pt.y),
                                      series: .value("Line", seg.id))
-                                .foregroundStyle(LinearGradient(colors: [Color.primary.opacity(bySeries ? 0.06 : 0.14), .clear],
+                                .foregroundStyle(LinearGradient(colors: [Color.primary.opacity(0.14), .clear],
                                                                 startPoint: .top, endPoint: .bottom))
                             LineMark(x: .value("Session", pt.x), y: .value("lb", pt.y), series: .value("Line", seg.id))
-                                .foregroundStyle(ink)
+                                .foregroundStyle(Color.primary)
                                 .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
                             PointMark(x: .value("Session", pt.x), y: .value("lb", pt.y))
                                 .foregroundStyle(Color.primary)

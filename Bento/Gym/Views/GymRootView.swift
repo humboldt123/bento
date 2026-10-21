@@ -37,16 +37,14 @@ struct GymRootView: View {
         .task { resumeToday() }
     }
 
-    /// Re-opens today's workout if the app was closed mid-session (it's only kept in memory)
+    /// Re-opens today's workout (kept only in memory), including one logged on another device
     private func resumeToday() {
         guard gymSession.active == nil else { return }
         let start = Calendar.current.startOfDay(for: .now)
         let descriptor = FetchDescriptor<WorkoutSession>(predicate: #Predicate { $0.date >= start },
                                                          sortBy: [SortDescriptor(\.date, order: .reverse)])
         let today = (try? modelContext.fetch(descriptor)) ?? []
-        // Unfinished = still has planned sets (Finish removes them)
-        if let open = today.first(where: { $0.entries.contains { $0.sets.contains(where: \.isPlanned) } }) {
-            gymSession.active = open
-        }
+        // Prefer one still in progress (has planned sets), else whatever was logged today
+        gymSession.active = today.first { $0.entries.contains { $0.sets.contains(where: \.isPlanned) } } ?? today.first
     }
 }

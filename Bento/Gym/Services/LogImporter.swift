@@ -84,6 +84,27 @@ enum LogImporter {
         var gyms = (try? context.fetch(FetchDescriptor<Gym>())) ?? []
         var count = 0
 
+        // A day already here (e.g. a workout planned on this device) still takes sets logged elsewhere:
+        // remote sets fill in sets that are only planned here, never overwrite ones you did
+        for day in days where loggedDays.contains(calendar.startOfDay(for: day.date)) {
+            guard let session = existing.first(where: { calendar.isDate($0.date, inSameDayAs: day.date) }) else { continue }
+            for parsed in day.entries {
+                guard let ex = parsed.exercise, let entry = session.entries.first(where: { $0.exerciseId == ex.id }) else { continue }
+                let done = entry.sets.filter { !$0.isPlanned }.count
+                guard parsed.sets.count > done else { continue }
+                let planned = entry.sets.filter(\.isPlanned).sorted { $0.order < $1.order }
+                for (k, remote) in parsed.sets.dropFirst(done).enumerated() {
+                    if k < planned.count {
+                        planned[k].weight = remote.weight
+                        planned[k].reps = remote.reps
+                        planned[k].isPlanned = false
+                    } else {
+                        entry.sets.append(WorkoutSet(order: entry.sets.count, weight: remote.weight, reps: remote.reps))
+                    }
+                }
+            }
+        }
+
         for day in days where !loggedDays.contains(calendar.startOfDay(for: day.date)) {
             let dayGym = day.gymName ?? gymName
             if let dayGym, !gyms.contains(where: { $0.name == dayGym }) {

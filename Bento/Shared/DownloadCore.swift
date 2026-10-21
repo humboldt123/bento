@@ -138,6 +138,8 @@ enum MediaResolver {
 
     // MARK: X / Twitter
 
+    /// Works as of 10/21/26. If X downloads break, this endpoint or its token changed; check cobalt's
+    /// api/src/processing/services/twitter.js for the current approach.
     /// Same trick cobalt uses as a fallback: X's public embed ("syndication") endpoint returns
     /// a post's media with no login, given a token derived from the post id.
     private static func resolveX(_ url: URL) async throws -> [ResolvedMedia] {
@@ -187,6 +189,9 @@ enum MediaResolver {
 
     // MARK: Instagram
 
+    /// Works as of 10/21/26 (tested on a reel, incl. username/reel/ID?igsh=… links). If Instagram
+    /// breaks, compare with cobalt's instagram.js: the embed page's "init"/contextJSON shape may have
+    /// changed. As of that date the mobile API (/media/ID/info) and GraphQL both need a login.
     /// Ported from cobalt (api/src/processing/services/instagram.js). Without a login the only path
     /// that still works is the post's embed page, which carries the post's data as JSON. Share links
     /// (instagram.com/share/…) redirect to the real post, but only for a non-browser user agent.
@@ -273,6 +278,9 @@ enum MediaResolver {
 
     // MARK: YouTube
 
+    /// Works as of 10/21/26 (1080p + AAC, Shorts/live/youtu.be links). If YouTube breaks, the
+    /// ANDROID_VR client probably needs a newer clientVersion or now wants a PO token; check which
+    /// clients yt-dlp currently defaults to (yt_dlp/extractor/youtube) and swap in one that returns plain URLs.
     /// cobalt uses youtubei.js, which needs a JS engine and proof-of-origin tokens. The Android VR
     /// client of YouTube's own player API (also used by yt-dlp) still returns plain stream URLs
     /// without either, so this asks it directly: best H.264 video up to 1080p plus AAC audio,

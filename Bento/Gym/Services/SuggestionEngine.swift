@@ -305,10 +305,13 @@ extension WorkoutEngine {
         return (top, sets.filter { ($0.weight ?? 0) == top }.compactMap(\.reps))
     }
 
-    /// Reps first: add a rep to each set until every set hits the top of the range, then go up one
-    /// weight step. Looks at the last few sessions, so one off day doesn't drop the target, and a
-    /// stall (no progress three times) resets lighter. After a long break, start lighter. With no
-    /// history at this gym, guesses from another gym.
+    /// Double progression: add a rep to each set until every set hits the top of the range, then go up
+    /// one weight step. According to the ACSM progression position stand (Ratamess et al., 2009,
+    /// Med Sci Sports Exerc 41(3)), load goes up 2–10% once the target is beaten by 1–2 reps on two
+    /// consecutive sessions; the NSCA calls this the "2-for-2" rule (Baechle & Earle, 2008).
+    /// Strength is compared with the Epley (1985) estimate, $\hat{1RM} = w\,(1 + r/30)$, with $r$ capped at
+    /// 15 because rep-based estimates lose accuracy past ~10 reps (LeSuer et al., 1997).
+    /// With no history at this gym, guesses from another gym.
     static func plan(
         for exercise: ExerciseDefinition,
         gym: Gym?,
@@ -324,7 +327,7 @@ extension WorkoutEngine {
         let lastSummary = summary(last.sets)
         let daysOff = Calendar.current.dateComponents([.day], from: last.date, to: now).day ?? 0
 
-        // Bodyweight: reps only, no ceiling at 12
+        // Bodyweight: reps only, no ceiling at 12. Past 20 reps, add load (our threshold, not from a paper)
         if isBodyweight(exercise) {
             let reps = last.sets.compactMap(\.reps)
             if daysOff > comebackDays {
@@ -339,7 +342,8 @@ extension WorkoutEngine {
             return (SetPlan(weight: added, targetReps: reps.map { $0 + 1 }, lastWeight: added, lastReps: reps), "+1 rep")
         }
 
-        // Reference: the better of the last two sessions, so an off day doesn't lower the bar
+        // Reference: the better of the last two sessions, so an off day doesn't lower the bar.
+        // Epley (1985): $\hat{1RM} = w\,(1 + \min(r, 15)/30)$
         func e1rm(_ x: (top: Double, reps: [Int])) -> Double { x.top * (1 + Double(min(x.reps.max() ?? 0, 15)) / 30) }
         var reference = lastSummary
         var offDay = false
@@ -352,14 +356,17 @@ extension WorkoutEngine {
         let step = weightStep(for: exercise, gym: gym, sessions: sessions)
         let topReps = repRange.upperBound
 
-        // Stalled: best-set e1RM hasn't beaten the session two before it, three times running
+        // Stalled: best-set $\hat{1RM}$ hasn't beaten the session two before it, three times running.
+        // The 10% deload is common coaching practice, not a tested rule
         let stalled: Bool = {
             guard recent.count >= 3, daysOff <= 14 else { return false }
             let values = recent.prefix(3).map { e1rm(summary($0.sets)) }   // newest first
             return values[0] <= values[2] * 1.01 && values[1] <= values[2] * 1.01
         }()
 
-        /// Detraining: strength holds ~4 weeks, reps-at-a-load fade sooner (Bosquet 2013)
+        /// Detraining: according to Bosquet et al. (2013, Scand J Med Sci Sports, doi 10.1111/sms.12047),
+        /// max strength holds for about 3–4 weeks off and losses speed up after that; reps at a given
+        /// load fade sooner. Multipliers on the last top weight, by days off
         let comeback: Double = switch daysOff {
         case ..<15: 1
         case ..<29: 0.95
@@ -368,14 +375,15 @@ extension WorkoutEngine {
         default: 0.75
         }
 
-        // Reps Epley predicts at a heavier weight, given this e1RM
+        // Epley (1985) solved for reps at a heavier weight: $r = 30\,(\hat{1RM}/w - 1)$
         func predictedReps(at w: Double) -> Int { Int((30 * (e1rm(reference) / w - 1)).rounded(.down)) }
 
         var weight: Double
         var reps: [Int]
         var note: String
         let allTop = lastReps.allSatisfy { $0 >= topReps }
-        // ACSM / NSCA "2-for-2": go up after hitting the top two sessions running, or beating it by 2
+        // "2-for-2" (Baechle & Earle, 2008; ACSM, Ratamess et al., 2009): go up after hitting the top
+        // two sessions running, or after beating it by 2 reps in one
         let prevAllTop = recent.count > 1 && summary(recent[1].sets).top == top
             && summary(recent[1].sets).reps.allSatisfy { $0 >= topReps }
         let beatBy2 = (lastReps.first ?? 0) >= topReps + 2
@@ -391,7 +399,8 @@ extension WorkoutEngine {
         } else if allTop && (prevAllTop || beatBy2) {
             let next = top + step
             if step / top > 0.10, predictedReps(at: next) < repRange.lowerBound {
-                // Big stack jump: earn it with more reps first, until the new weight would still give 8+
+                // ACSM (Ratamess et al., 2009) suggests 2–10% load increases. A stack jump above 10% that
+                // Epley predicts would drop you under 8 reps is earned with more reps first
                 weight = top
                 reps = lastReps.map { min($0 + 1, 16) }
                 note = "Next plate is a big jump (+\(step.clean)). Push past \(topReps) reps first"

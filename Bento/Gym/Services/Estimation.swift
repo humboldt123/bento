@@ -15,6 +15,11 @@ extension WorkoutEngine {
         return long ? "\(w.clean) lb × \(r)" : "\(w.clean)×\(r)"
     }
 
+    /// Same as label(_:) for a plain weight and rep count
+    static func label(weight w: Double, reps r: Int, bodyweight: Bool) -> String {
+        bodyweight ? (w > 0 ? "BW+\(w.clean)×\(r)" : "BW×\(r)") : "\(w.clean)×\(r)"
+    }
+
     // MARK: - In-session nudge
 
     struct Nudge {
@@ -23,9 +28,11 @@ extension WorkoutEngine {
         let reason: String
     }
 
-    /// Too easy = at least the top of the range with no fatigue drop-off. At a fixed load near failure,
-    /// trained lifters drop ~1–2 reps on set 2 and 2–4 on set 3 (Senna 2009), so holding steady or
-    /// climbing means reps in reserve. Set 1 two past the top counts on its own.
+    /// Too easy = at least the top of the range with no fatigue drop-off. According to Senna et al.
+    /// (2009, J Sports Sci Med, PMC3761475), trained men at a 10RM load drop ~1–2 reps on set 2 and
+    /// 2–4 on set 3, so holding steady or climbing means reps in reserve. Trained lifters judge reps
+    /// in reserve within about 1 rep (Helms et al., 2016, Strength Cond J 38(4); Zourdos et al., 2016),
+    /// so set 1 two past the top counts on its own.
     static func inSessionNudge(exercise: ExerciseDefinition, gym: Gym?, sessions: [WorkoutSession],
                                weight: Double, reps: Int, setIndex: Int, previousReps: Int? = nil) -> Nudge? {
         if isBodyweight(exercise) {
@@ -38,7 +45,8 @@ extension WorkoutEngine {
         guard reps >= top + 2 || (reps >= top && noDropoff) || (setIndex == 0 && reps >= top + 1) else { return nil }
         let next = nextWeight(after: weight, exercise: exercise, gym: gym, sessions: sessions)
         guard next > weight else { return nil }
-        // Epley: reps you'd likely get at the next weight
+        // Epley (1985): $\hat{1RM} = w\,(1 + r/30)$, so reps at the next weight $w'$ are
+        // $r' = 30\,(\hat{1RM}/w' - 1)$
         let e1rm = weight * (1 + Double(min(reps, 15)) / 30)
         let predicted = Int((30 * (e1rm / next - 1)).rounded(.down))
         guard predicted >= repRange.lowerBound - 1 else { return nil }
@@ -66,7 +74,8 @@ extension WorkoutEngine {
     }
 
     /// Multiplier from a known lift's e1RM (by kind) to an unknown one. Dumbbell numbers are per hand.
-    /// Barbell→dumbbell press ≈ 0.4 per hand (DB pair ~80% of BB); machines vary a lot by leverage.
+    /// Barbell→dumbbell press ≈ 0.4 per hand (a dumbbell pair lifts ~80% of the barbell). These are
+    /// practitioner norms, not trial data; machines vary a lot by leverage.
     static func ratio(from: Kind, to: Kind) -> Double {
         if from == to { return 1 }
         switch (from, to) {
@@ -85,7 +94,8 @@ extension WorkoutEngine {
         }
     }
 
-    /// Unknown machines are the riskiest, so start well under the estimate (70–80%)
+    /// Unknown machines are the riskiest, so start well under the estimate (70–80%). Our own margin:
+    /// rep-based 1RM estimates are typically off by 5–10% (LeSuer et al., 1997)
     static let safetyFactor = 0.75
 
     /// Movement patterns with known strength ratios (per hand for dumbbells)
@@ -154,7 +164,8 @@ extension WorkoutEngine {
             if kind(best.ex) == .dumbbell && kind(exercise) != .dumbbell { factor /= 0.4 }
         }
         let e1rm = best.e1rm * factor * safetyFactor
-        // Aim for ~12 easy reps (Epley: weight ≈ e1RM / 1.4), then calibrate from set 1
+        // Aim for ~12 easy reps. Epley (1985) solved for weight: $w = \hat{1RM} / (1 + 12/30) = \hat{1RM}/1.4$.
+        // Then calibrate from set 1
         var weight = e1rm / (1 + 12.0 / 30)
         let step = weightStep(for: exercise, gym: gym, sessions: sessions)
         weight = max(step, (weight / step).rounded(.down) * step)

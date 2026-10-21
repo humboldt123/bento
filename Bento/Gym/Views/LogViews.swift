@@ -495,46 +495,51 @@ struct SetEntrySheet: View {
     }
 }
 
-/// Every set from the last 14 sessions, one column per session, shaded by reps (lighter = fewer), so
-/// each rep target reads as its own track without trend lines. Sets with the same weight on the same
-/// day stack, darkest on top. Long breaks only widen the step a little. Tap a column for that day.
+/// One value per session (best weight, est. 1RM, most reps or volume) as a filled line. Sessions sit
+/// one step apart and a break widens the step logarithmically, so a 3-month gap shows without
+/// eating the width. Tap a point for that day.
 struct ProgressChart: View {
     let exercise: ExerciseDefinition
     let gym: Gym?
     let history: [WorkoutSession]
     let today: [WorkoutSet]
 
+    enum Metric: String, CaseIterable {
+        case weight = "Weight", oneRM = "1RM", reps = "Reps", volume = "Volume"
+    }
+
+    @AppStorage("progressMetric") private var metric: Metric = .weight
     @State private var selected: Int?
 
-    private struct Day {
+    private struct Day: Identifiable {
+        var id: Int { index }
         let index: Int
         let x: Double
         let date: Date
         let sets: [(weight: Double, reps: Int)]
-    }
 
-    private struct Dot: Identifiable {
-        let id: Int
-        let day: Int
-        let x: Double
-        let weight: Double
-        let reps: Int
-    }
-
-    /// Light → dark green by reps (sequential, one hue)
-    static func shade(_ reps: Int, lo: Int, hi: Int) -> Color {
-        let t = hi > lo ? Double(reps - lo) / Double(hi - lo) : 1
-        return Color(hue: 0.39, saturation: 0.35 + 0.55 * t, brightness: 0.85 - 0.5 * t)
-    }
-
-    private static func working(_ sets: [WorkoutSet]) -> [(weight: Double, reps: Int)] {
-        sets.filter { !$0.isPlanned }.compactMap { s in
-            guard let w = s.weight, w > 0, let r = s.reps, r > 0 else { return nil }
-            return (w, r)
+        func value(_ m: Metric) -> Double {
+            switch m {
+            case .weight: sets.map(\.weight).max() ?? 0
+            case .oneRM: sets.map { $0.weight * (1 + Double(min($0.reps, 15)) / 30) }.max() ?? 0
+            case .reps: Double(sets.map(\.reps).max() ?? 0)
+            case .volume: sets.reduce(0) { $0 + $1.weight * Double($1.reps) }
+            }
         }
     }
 
-    /// Last 14 sessions (this gym for machines), plus today's sets if they aren't saved yet
+    private var bodyweight: Bool { WorkoutEngine.isBodyweight(exercise) }
+    private var metrics: [Metric] { bodyweight ? [.reps] : Metric.allCases }
+    private var shownMetric: Metric { metrics.contains(metric) ? metric : metrics[0] }
+
+    private static func working(_ sets: [WorkoutSet]) -> [(weight: Double, reps: Int)] {
+        sets.filter { !$0.isPlanned }.compactMap { s in
+            guard let r = s.reps, r > 0 else { return nil }
+            return (s.weight ?? 0, r)
+        }
+    }
+
+    /// Last 20 sessions (this gym for machines), plus today's sets if they aren't saved yet
     private func makeDays() -> [Day] {
         let gymName = WorkoutEngine.isGymSpecific(exercise) ? gym?.name : nil
         var raw: [(Date, [(weight: Double, reps: Int)])] = history
@@ -545,7 +550,7 @@ struct ProgressChart: View {
                 let sets = Self.working(entry.sets)
                 return sets.isEmpty ? nil : (session.date, sets)
             }
-            .suffix(14)
+            .suffix(20)
         let todays = Self.working(today)
         if !todays.isEmpty, !raw.contains(where: { Calendar.current.isDateInToday($0.0) }) {
             raw.append((.now, todays))
@@ -554,72 +559,84 @@ struct ProgressChart: View {
         var x = 0.0
         for (i, r) in raw.enumerated() {
             if let prev = days.last {
-                let weeks = r.0.timeIntervalSince(prev.date) / 604_800
-                x += 1 + min(1.5, max(0, weeks - 2) * 0.15)
+                // A week or less is one step; longer breaks add log2(weeks) × 0.4 (3 months ≈ +1.5)
+                let weeks = max(1, r.0.timeIntervalSince(prev.date) / 604_800)
+                x += 1 + 0.4 * log2(weeks)
             }
             days.append(Day(index: i, x: x, date: r.0, sets: r.1))
         }
         return days
     }
 
-    private static func strength(_ s: (weight: Double, reps: Int)) -> Double { s.weight * (1 + Double(min(s.reps, 15)) / 30) }
-
-    private static func day(_ d: Date) -> String {
-        Calendar.current.isDateInToday(d) ? "Today" : d.formatted(.dateTime.month(.abbreviated).day())
+    private func format(_ v: Double) -> String {
+        switch shownMetric {
+        case .reps: "\(Int(v))"
+        case .volume: v >= 10_000 ? String(format: "%.1fk", v / 1000) : "\(Int(v.rounded()))"
+        default: ((v * 10).rounded() / 10).clean
+        }
     }
+
+    private var unit: String { shownMetric == .reps ? "reps" : "lb" }
 
     var body: some View {
         let days = makeDays()
-        // Fewer reps drawn first, so the darkest dot ends up on top of a stack
-        let dots = days.flatMap { d in d.sets.map { (d, $0) } }
-            .sorted { $0.1.reps < $1.1.reps }
-            .enumerated()
-            .map { Dot(id: $0, day: $1.0.index, x: $1.0.x, weight: $1.1.weight, reps: $1.1.reps) }
 
-        if WorkoutEngine.isBodyweight(exercise) || days.count < 2 {
+        if days.count < 2 {
             EmptyView()
         } else {
-            let lo = dots.map(\.weight).min()!, hi = dots.map(\.weight).max()!
-            let pad = max(5, (hi - lo) * 0.18)
-            let yMin = max(0, ((lo - pad) / 5).rounded(.down) * 5)
-            let yMax = ((hi + pad) / 5).rounded(.up) * 5
-            let repLo = dots.map(\.reps).min()!, repHi = dots.map(\.reps).max()!
+            let m = shownMetric
+            let values = days.map { $0.value(m) }
+            let lo = values.min()!, hi = values.max()!
+            let pad = max(m == .reps ? 1 : 5, (hi - lo) * 0.15)
+            let yMin = max(0, lo - pad)
+            let yMax = hi + pad
             let xMax = days.last!.x
-            let shown = selected.flatMap { i in days.first { $0.index == i } }
-            let best = days.flatMap(\.sets).max { Self.strength($0) < Self.strength($1) }!
+            let shown = selected.flatMap { i in days.first { $0.index == i } } ?? days.last!
+            let delta = shown.value(m) - values[0]
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("Sets").font(.headline)
-                    Spacer()
-                    Group {
-                        if let d = shown {
-                            Text("\(Self.day(d.date)) · \(d.sets.map { "\($0.weight.clean)×\($0.reps)" }.joined(separator: ", "))")
-                        } else {
-                            Text("best · \(best.weight.clean) lb × \(best.reps)").foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(selected == nil ? "Progress" : shown.date.formatted(.dateTime.month(.abbreviated).day().year()))
+                            .font(.headline)
+                        if selected != nil {
+                            Text(shown.sets.map { WorkoutEngine.label(weight: $0.weight, reps: $0.reps, bodyweight: bodyweight) }
+                                    .joined(separator: ", "))
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
                         }
                     }
-                    .font(.subheadline.weight(.semibold).monospacedDigit())
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    Spacer()
+                    Text(format(shown.value(m)))
+                        .font(.system(size: 30, weight: .bold).monospacedDigit())
+                    Text(unit).font(.subheadline).foregroundStyle(.secondary)
+                    if delta != 0 {
+                        Text("\(delta > 0 ? "+" : "−")\(format(abs(delta)))")
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(delta > 0 ? Color.bentoActivity : .red)
+                    }
                 }
 
                 Chart {
-                    if let d = shown {
-                        RectangleMark(x: .value("Session", d.x), width: 22)
-                            .foregroundStyle(Color.primary.opacity(0.06))
-                    }
-                    ForEach(dots) { dot in
-                        PointMark(x: .value("Session", dot.x), y: .value("lb", dot.weight))
-                            .foregroundStyle(Self.shade(dot.reps, lo: repLo, hi: repHi))
-                            .symbolSize(85)
+                    ForEach(days) { d in
+                        AreaMark(x: .value("Session", d.x), yStart: .value("min", yMin), yEnd: .value(unit, d.value(m)))
+                            .foregroundStyle(LinearGradient(colors: [Color.primary.opacity(0.14), Color.primary.opacity(0.02)],
+                                                            startPoint: .top, endPoint: .bottom))
+                        LineMark(x: .value("Session", d.x), y: .value(unit, d.value(m)))
+                            .foregroundStyle(Color.primary)
+                            .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                        PointMark(x: .value("Session", d.x), y: .value(unit, d.value(m)))
+                            .foregroundStyle(Color.primary)
+                            .symbolSize(d.index == selected ? 110 : 30)
                     }
                 }
-                .chartXScale(domain: -0.4...(xMax + 0.4))
+                .chartXScale(domain: -0.3...(xMax + 0.3))
                 .chartYScale(domain: yMin...yMax)
                 .chartXAxis(.hidden)
                 .chartYAxis {
-                    AxisMarks(position: .trailing, values: .automatic(desiredCount: 4)) {
+                    AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) {
                         AxisGridLine().foregroundStyle(Color.primary.opacity(0.07))
                         AxisValueLabel()
                     }
@@ -635,17 +652,20 @@ struct ProgressChart: View {
                             }
                     }
                 }
-                .frame(height: 200)
+                .frame(height: 190)
 
-                // Key: rep shades, like the activity grid's less → more
-                HStack(spacing: 4) {
-                    Text("\(repLo) reps").font(.caption2).foregroundStyle(.secondary)
-                    ForEach(0..<5) { k in
-                        Circle()
-                            .fill(Self.shade(repLo + (repHi - repLo) * k / 4, lo: repLo, hi: repHi))
-                            .frame(width: 9, height: 9)
+                if metrics.count > 1 {
+                    HStack(spacing: 8) {
+                        ForEach(metrics, id: \.self) { option in
+                            Button(option.rawValue) { metric = option }
+                                .font(.subheadline.weight(.semibold))
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 7)
+                                .background(Capsule().fill(option == m ? Color.primary : Color.primary.opacity(0.07)))
+                                .foregroundStyle(option == m ? Color.bentoPaper : .primary)
+                                .buttonStyle(.plain)
+                        }
                     }
-                    Text("\(repHi)").font(.caption2).foregroundStyle(.secondary)
                 }
             }
             .padding(14)

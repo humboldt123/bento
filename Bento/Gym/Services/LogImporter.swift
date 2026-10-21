@@ -197,8 +197,9 @@ enum LogImporter {
             var lines = [header.joined(separator: " · ")]
             for entry in session.sortedEntries {
                 let name = store.exercise(id: entry.exerciseId)?.name ?? entry.exerciseId
+                // Only sets actually done; planned targets are not a workout
                 let sets = entry.sortedSets.compactMap { set -> String? in
-                    guard let w = set.weight, let r = set.reps else { return nil }
+                    guard !set.isPlanned, let w = set.weight, let r = set.reps else { return nil }
                     let note = set.note ?? (set.tags.isEmpty ? nil : set.tags.joined(separator: ", "))
                     return "\(w.clean)×\(r)" + (note.map { " (\($0))" } ?? "")
                 }

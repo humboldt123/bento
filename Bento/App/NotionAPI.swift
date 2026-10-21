@@ -53,6 +53,10 @@ struct NotionAPI {
     }
 
     private func request(_ method: String, _ path: String, body: [String: Any]?) async throws -> [String: Any] {
+        #if targetEnvironment(simulator)
+        // Test builds read real data but never change it
+        if method != "GET" && !path.hasSuffix("/query") { return [:] }
+        #endif
         var req = URLRequest(url: URL(string: "https://api.notion.com/v1/\(path)")!)
         req.httpMethod = method
         req.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")

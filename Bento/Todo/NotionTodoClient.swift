@@ -183,6 +183,9 @@ struct NotionTodoClient: Sendable {
     // MARK: - Private
 
     private func request(_ method: String, _ path: String, body: [String: Any]?) async throws -> [String: Any] {
+        #if targetEnvironment(simulator)
+        if method != "GET" && !path.hasSuffix("/query") { return [:] }
+        #endif
         var req = URLRequest(url: URL(string: "https://api.notion.com/v1/\(path)")!)
         req.httpMethod = method
         req.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")

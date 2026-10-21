@@ -529,9 +529,11 @@ struct ProgressChart: View {
             // Frame the data: room below the lowest point and above the highest (≥10 lb or 40% of the
             // spread), on round tens, so changes are visible without dead space down to 0
             let lo = points.map(\.weight).min() ?? 0, hi = points.map(\.weight).max() ?? 0
-            let pad = max(10, (hi - lo) * 0.4)
-            let floor = max(0, ((lo - pad) / 10).rounded(.down) * 10)
-            let ceiling = ((hi + pad) / 10).rounded(.up) * 10
+            // Lowest point sits about a third of the way up; highest about a fifth from the top
+            let below = max(10, (hi - lo) * 0.6, lo * 0.2)
+            let above = max(10, (hi - lo) * 0.3, hi * 0.1)
+            let floor = max(0, ((lo - below) / 10).rounded(.down) * 10)
+            let ceiling = ((hi + above) / 10).rounded(.up) * 10
             let shown = selected.flatMap { d in points.min { abs($0.date.timeIntervalSince(d)) < abs($1.date.timeIntervalSince(d)) } }
 
             VStack(alignment: .leading, spacing: 10) {

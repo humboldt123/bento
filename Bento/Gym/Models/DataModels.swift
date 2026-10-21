@@ -85,14 +85,15 @@ final class WorkoutSet {
         self.reps = reps
     }
 
+    /// Planned (not yet done) sets never count toward history, PRs or charts
     var estimated1RM: Double? {
-        guard let w = weight, w > 0, let r = reps, r > 0 else { return nil }
+        guard !isPlanned, let w = weight, w > 0, let r = reps, r > 0 else { return nil }
         if r == 1 { return w }
         return w * (1.0 + Double(r) / 30.0)
     }
 
     var volume: Double {
-        (weight ?? 0) * Double(reps ?? 0)
+        isPlanned ? 0 : (weight ?? 0) * Double(reps ?? 0)
     }
 
     var displayText: String {

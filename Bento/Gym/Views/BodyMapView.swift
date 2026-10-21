@@ -29,18 +29,27 @@ struct BodyMapView: View {
         WorkoutEngine.muscleRecovery(sessions: Array(sessions), exerciseStore: store)
     }
 
-    /// Compute which muscles have been worked and their intensity
+    /// Hard sets per muscle, not pounds. Pounds aren't comparable across exercises: when sets go near
+    /// failure, growth is about the same from ~30% 1RM up (Schoenfeld et al., 2017, J Strength Cond Res
+    /// 31(12); Lopez et al., 2021, Med Sci Sports Exerc 53(6)), so a 200 lb leg press set and a 30 lb
+    /// dumbbell set are each one set. Per-muscle dose is counted in sets near failure (Baz-Valle et al.,
+    /// 2022, J Hum Kinet 81). Each set counts 1 for target muscles and ½ for helpers, the weighting that
+    /// fit 67 studies best (Pelland et al., Sports Med, doi 10.1007/s40279-025-02344-w).
+    /// Warm-ups don't count. Sets past 30 reps count ½: very light loads (~20% 1RM) grew muscle less
+    /// (Lasevicius et al., 2018, Eur J Sport Sci 18(6)); the 30-rep cutoff is our own heuristic.
     private var muscleActivity: [Int: Double] {
         var activity: [Int: Double] = [:]
         for session in filteredSessions {
             for entry in session.entries {
                 guard let ex = store.exercise(id: entry.exerciseId) else { continue }
-                let volume = entry.sets.reduce(0.0) { $0 + $1.volume }
+                let sets = entry.sets
+                    .filter { !$0.isPlanned && ($0.reps ?? 0) > 0 && !$0.tags.contains(SetTag.warmup.rawValue) }
+                    .reduce(0.0) { $0 + (($1.reps ?? 0) > 30 ? 0.5 : 1) }
                 for mid in ex.targetMuscleIds {
-                    activity[mid, default: 0] += volume
+                    activity[mid, default: 0] += sets
                 }
                 for mid in ex.synergistMuscleIds {
-                    activity[mid, default: 0] += volume * 0.5
+                    activity[mid, default: 0] += sets * 0.5
                 }
             }
         }

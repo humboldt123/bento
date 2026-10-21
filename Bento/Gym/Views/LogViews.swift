@@ -496,49 +496,71 @@ struct SetEntrySheet: View {
     }
 }
 
-/// Best set per session (estimated 1-rep max, so different rep counts compare), with today's
-/// sets in green
+/// Top-set weight per session, each dot colored by its reps (lighter = fewer), today's sets as diamonds
 struct ProgressChart: View {
     let exercise: ExerciseDefinition
     let gym: Gym?
     let history: [WorkoutSession]
     let today: [WorkoutSet]
 
+    private struct Point: Identifiable {
+        let id = UUID()
+        let date: Date
+        let weight: Double
+        let reps: Int
+        let isToday: Bool
+    }
+
     var body: some View {
         let gymName = WorkoutEngine.isGymSpecific(exercise) ? gym?.name : nil
         let past = WorkoutEngine.exerciseHistory(exerciseId: exercise.id, sessions: history, gymName: gymName).suffix(12)
-        let todayPoints = today.compactMap(\.estimated1RM)
-        if WorkoutEngine.isBodyweight(exercise) {
+        let points = past.map { Point(date: $0.date, weight: $0.topWeight, reps: $0.topReps, isToday: false) }
+            + today.compactMap { s in s.weight.flatMap { w in s.reps.map { Point(date: .now, weight: w, reps: $0, isToday: true) } } }
+        let weights = points.map(\.weight)
+        if WorkoutEngine.isBodyweight(exercise) || points.count < 2 || weights.isEmpty {
             EmptyView()
-        } else if past.count + (todayPoints.isEmpty ? 0 : 1) >= 2 {
+        } else {
+            let lo = weights.min()!, hi = weights.max()!
+            let pad = max(5, (hi - lo) * 0.25)
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Progress").font(.headline)
                     Spacer()
-                    Text("est. 1-rep max\(gymName.map { " · \($0)" } ?? "")")
+                    Text("top set\(gymName.map { " · \($0)" } ?? "")")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Chart {
-                    ForEach(Array(past.enumerated()), id: \.offset) { _, h in
-                        LineMark(x: .value("Date", h.date), y: .value("e1RM", h.estimated1RM))
-                            .foregroundStyle(Color.primary.opacity(0.5))
-                        PointMark(x: .value("Date", h.date), y: .value("e1RM", h.estimated1RM))
-                            .foregroundStyle(Color.primary)
-                            .symbolSize(30)
+                    ForEach(points.filter { !$0.isToday }) { p in
+                        LineMark(x: .value("Date", p.date), y: .value("lb", p.weight))
+                            .foregroundStyle(Color.primary.opacity(0.3))
                     }
-                    ForEach(Array(todayPoints.enumerated()), id: \.offset) { _, v in
-                        PointMark(x: .value("Date", Date.now), y: .value("e1RM", v))
-                            .foregroundStyle(Color.bentoActivity)
-                            .symbolSize(60)
+                    ForEach(points) { p in
+                        PointMark(x: .value("Date", p.date), y: .value("lb", p.weight))
+                            .foregroundStyle(by: .value("Reps", p.reps))
+                            .symbol(p.isToday ? .diamond : .circle)
+                            .symbolSize(p.isToday ? 90 : 55)
+                            .annotation(position: .top, spacing: 2) {
+                                if p.isToday {
+                                    Text("\(p.reps)").font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary)
+                                }
+                            }
                     }
                 }
-                .chartYScale(domain: .automatic(includesZero: false))
-                .frame(height: 150)
-                if let best = past.max(by: { $0.estimated1RM < $1.estimated1RM }) {
-                    Text("Best: \(best.topWeight.clean)×\(best.topReps) on \(best.date.formatted(.dateTime.month(.abbreviated).day()))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                .chartForegroundStyleScale(range: Gradient(colors: [Color.bentoActivity.opacity(0.25), Color.bentoActivity, Color(red: 0.05, green: 0.3, blue: 0.15)]))
+                .chartYScale(domain: (lo - pad)...(hi + pad))
+                .chartLegend(.hidden)
+                .frame(height: 160)
+                HStack(spacing: 6) {
+                    Text("reps").font(.caption2).foregroundStyle(.secondary)
+                    LinearGradient(colors: [Color.bentoActivity.opacity(0.25), Color.bentoActivity, Color(red: 0.05, green: 0.3, blue: 0.15)],
+                                   startPoint: .leading, endPoint: .trailing)
+                        .frame(width: 70, height: 6)
+                        .clipShape(Capsule())
+                    Text("\(points.map(\.reps).min() ?? 0)–\(points.map(\.reps).max() ?? 0)").font(.caption2).foregroundStyle(.secondary)
+                    Spacer()
+                    Image(systemName: "diamond.fill").font(.system(size: 8)).foregroundStyle(Color.bentoActivity)
+                    Text("today").font(.caption2).foregroundStyle(.secondary)
                 }
             }
             .padding(14)

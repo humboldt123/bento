@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 /// da gym: the old Lifta app, presented from the Bento menu
 struct GymRootView: View {
@@ -33,5 +34,19 @@ struct GymRootView: View {
         }
         .tint(.primary)
         .environment(gymSession)
+        .task { resumeToday() }
+    }
+
+    /// Re-opens today's workout if the app was closed mid-session (it's only kept in memory)
+    private func resumeToday() {
+        guard gymSession.active == nil else { return }
+        let start = Calendar.current.startOfDay(for: .now)
+        let descriptor = FetchDescriptor<WorkoutSession>(predicate: #Predicate { $0.date >= start },
+                                                         sortBy: [SortDescriptor(\.date, order: .reverse)])
+        let today = (try? modelContext.fetch(descriptor)) ?? []
+        // Unfinished = still has planned sets (Finish removes them)
+        if let open = today.first(where: { $0.entries.contains { $0.sets.contains(where: \.isPlanned) } }) {
+            gymSession.active = open
+        }
     }
 }

@@ -111,6 +111,7 @@ struct HomeView: View {
             let entry = WorkoutEntry(exerciseId: suggestion.exercise.id, order: i)
             session.entries.append(entry)
             let reps: [Int?] = suggestion.plan?.targetReps ?? [nil, nil, nil]
+            entry.plannedCount = reps.count
             for (j, r) in reps.enumerated() {
                 let set = WorkoutSet(order: j, weight: suggestion.plan?.weight, reps: r)
                 set.isPlanned = true

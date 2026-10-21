@@ -1,4 +1,5 @@
 import SwiftUI
+import Charts
 import SwiftData
 
 /// Log: add exercise → pick weight/reps → add set → repeat
@@ -22,6 +23,14 @@ struct ActiveSessionView: View {
     var body: some View {
         NavigationStack {
             List {
+                if let session, !session.entries.isEmpty {
+                    Section {
+                        let (done, planned) = muscleProgress(session)
+                        SessionMuscleFigure(done: done, planned: planned)
+                            .listRowBackground(Color.clear)
+                            .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                    }
+                }
                 if let session {
                     Section {
                         ForEach(session.sortedEntries) { entry in
@@ -91,6 +100,20 @@ struct ActiveSessionView: View {
         }
     }
 
+    /// Effective sets per muscle so far (targets 1, helpers ½), and muscles still planned
+    private func muscleProgress(_ session: WorkoutSession) -> ([Int: Double], Set<Int>) {
+        var done: [Int: Double] = [:]
+        var planned = Set<Int>()
+        for entry in session.entries {
+            guard let ex = store.exercise(id: entry.exerciseId) else { continue }
+            let n = Double(entry.sets.filter { !$0.isPlanned }.count)
+            for m in ex.targetMuscleIds { done[m, default: 0] += n }
+            for m in ex.synergistMuscleIds { done[m, default: 0] += n / 2 }
+            if entry.sets.contains(where: \.isPlanned) { planned.formUnion(ex.targetMuscleIds) }
+        }
+        return (done.filter { $0.value > 0 }, planned)
+    }
+
     // MARK: Taken / later / skip
 
     private var gym: Gym? { gyms.first { $0.name == (session?.gymName ?? currentGymName) } }
@@ -123,6 +146,7 @@ struct ActiveSessionView: View {
         let new = WorkoutEntry(exerciseId: sub.id, order: entry.order + 1)
         let (plan, _) = WorkoutEngine.plan(for: sub, gym: gym, sessions: history)
         let reps: [Int?] = plan?.targetReps ?? [nil, nil, nil]
+        new.plannedCount = reps.count
         for (j, r) in reps.enumerated() {
             let set = WorkoutSet(order: j, weight: plan?.weight, reps: r)
             set.isPlanned = true
@@ -207,34 +231,45 @@ private struct EntryRow: View {
     @Environment(ExerciseStore.self) private var store
 
     var body: some View {
-        let done = entry.sortedSets.filter { !$0.isPlanned }
-        let planned = entry.sets.count - done.count
+        let ex = store.exercise(id: entry.exerciseId)
+        let done = entry.sets.filter { !$0.isPlanned }.count
+        let total = max(entry.sets.count, entry.plannedCount)
+        let complete = done > 0 && done == total
         HStack(spacing: 12) {
-            if let ex = store.exercise(id: entry.exerciseId) {
+            if let ex {
                 ExerciseThumbnail(exercise: ex)
                     .frame(width: 44, height: 44)
+                    .opacity(complete ? 0.5 : 1)
             }
-            VStack(alignment: .leading, spacing: 4) {
-                Text(store.exercise(id: entry.exerciseId)?.name ?? "Exercise")
+            VStack(alignment: .leading, spacing: 3) {
+                Text(ex?.name ?? "Exercise")
                     .font(.headline)
-                if done.isEmpty {
-                    Text(planned > 0 ? "\(planned) sets planned" : "tap to add sets")
+                    .strikethrough(complete, color: .secondary)
+                    .foregroundStyle(complete ? .secondary : .primary)
+                if let ex, !ex.targetMuscles.isEmpty {
+                    Text(ex.targetMuscles.prefix(3).map(\.name).joined(separator: " · "))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                } else {
-                    Text(done.map { "\(($0.weight ?? 0).clean)×\($0.reps ?? 0)" }.joined(separator: "  "))
-                        .font(.subheadline.monospacedDigit())
-                    + Text(planned > 0 ? "  · \(planned) to go" : "")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
+                Text(progressText(done: done, total: total))
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(done > 0 ? Color.bentoActivity : .secondary)
             }
             Spacer()
-            Image(systemName: "chevron.right")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+            Image(systemName: complete ? "checkmark.circle.fill" : done > 0 ? "circle.lefthalf.filled" : "circle")
+                .font(.title3)
+                .foregroundStyle(done > 0 ? Color.bentoActivity : Color.secondary.opacity(0.4))
         }
         .contentShape(Rectangle())
+    }
+
+    /// "2 of 3 done", "3 sets done" (nothing planned), "tap to add sets"
+    private func progressText(done: Int, total: Int) -> String {
+        let planned = entry.plannedCount > 0
+        if total == 0 { return "tap to add sets" }
+        if !planned && done == total { return done == 1 ? "1 set done" : "\(done) sets done" }
+        return "\(done) of \(total) done"
     }
 }
 
@@ -252,15 +287,17 @@ struct SetEntrySheet: View {
 
     @State private var weight: Double = 0
     @State private var reps = 10
-    /// "Guess: ~80% of SIG (85 lb)" when there's no history at this gym
+    /// "Guess: …" when there's no history for this exercise here
     @State private var guessNote: String?
-    /// Suggested next weight after a set that hit the top of the rep range
-    @State private var nudge: Double?
+    /// Suggested next weight after a set that was easier than expected
+    @State private var nudge: WorkoutEngine.Nudge?
 
     private var exercise: ExerciseDefinition? { store.exercise(id: entry.exerciseId) }
     private var gym: Gym? { gyms.first { $0.name == (entry.session?.gymName ?? currentGymName) } }
     private var done: [WorkoutSet] { entry.sortedSets.filter { !$0.isPlanned } }
     private var planned: [WorkoutSet] { entry.sortedSets.filter(\.isPlanned) }
+    private var others: [WorkoutSession] { sessions.filter { $0 !== entry.session } }
+    private var bodyweight: Bool { exercise.map(WorkoutEngine.isBodyweight) ?? false }
 
     private var step: Double {
         guard let exercise else { return 5 }
@@ -269,79 +306,67 @@ struct SetEntrySheet: View {
 
     /// "last time 70×12, 85×11" from previous sessions (not this one)
     private var lastTime: String? {
-        guard let exercise else { return nil }
-        let others = sessions.filter { $0 !== entry.session }
-        guard let last = WorkoutEngine.lastPerformance(of: exercise, gym: gym, sessions: others) else { return nil }
-        return "last time " + last.sets.map { "\(($0.weight ?? 0).clean)×\($0.reps ?? 0)" }.joined(separator: ", ")
+        guard let exercise,
+              let last = WorkoutEngine.lastPerformance(of: exercise, gym: gym, sessions: others) else { return nil }
+        return "last time " + last.sets.map { WorkoutEngine.label($0, bodyweight: bodyweight) }.joined(separator: ", ")
     }
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 20) {
-                if let lastTime {
-                    Text(lastTime)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                } else if let guessNote {
-                    Label(guessNote, systemImage: "questionmark.circle")
-                        .font(.subheadline)
-                        .foregroundStyle(.orange)
-                }
-
-                VStack(spacing: 14) {
-                    stepper(value: Binding(get: { weight }, set: { weight = max(0, $0) }),
-                            step: step, unit: "lb", format: { $0.clean })
-                    stepper(value: Binding(get: { Double(reps) }, set: { reps = max(1, Int($0)) }),
-                            step: 1, unit: "reps", format: { String(Int($0)) })
-                }
-
-                Button {
-                    addSet()
-                } label: {
-                    Text(planned.isEmpty ? "Add set" : "Add set \(done.count + 1) of \(done.count + planned.count)")
-                        .font(.title3.bold())
-                }
-                .buttonStyle(BentoButtonStyle())
-
-                if let nudge {
-                    HStack {
-                        Text("Hit \(WorkoutEngine.repRange.upperBound)+ reps. Had more in the tank?")
+            ScrollView {
+                VStack(spacing: 18) {
+                    if let lastTime {
+                        Text(lastTime)
                             .font(.subheadline)
-                        Spacer()
-                        Button("Try \(nudge.clean) lb") {
-                            weight = nudge
-                            reps = WorkoutEngine.repRange.lowerBound
-                            self.nudge = nil
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(.primary)
+                            .foregroundStyle(.secondary)
+                    } else if let guessNote {
+                        Label(guessNote, systemImage: "questionmark.circle")
+                            .font(.subheadline)
+                            .foregroundStyle(.orange)
+                            .multilineTextAlignment(.center)
                     }
-                    .padding(12)
-                    .bentoCard(cornerRadius: 14)
-                }
 
-                List {
-                    ForEach(Array(done.enumerated()), id: \.element.id) { i, set in
-                        HStack {
-                            Text("Set \(i + 1)")
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text("\((set.weight ?? 0).clean) lb × \(set.reps ?? 0)")
-                                .monospacedDigit()
-                        }
+                    VStack(spacing: 14) {
+                        stepper(value: Binding(get: { weight }, set: { weight = max(bodyweight ? 0 : step, $0) }),
+                                step: step, unit: bodyweight ? (weight == 0 ? "bodyweight" : "lb added") : "lb",
+                                format: { $0.clean })
+                        stepper(value: Binding(get: { Double(reps) }, set: { reps = max(1, Int($0)) }),
+                                step: 1, unit: "reps", format: { String(Int($0)) })
                     }
-                    .onDelete { offsets in
-                        for i in offsets {
-                            let set = done[i]
-                            entry.sets.removeAll { $0 === set }
-                            modelContext.delete(set)
+
+                    Button {
+                        addSet()
+                    } label: {
+                        Text(planned.isEmpty ? "Add set \(done.count + 1)" : "Add set \(done.count + 1) of \(done.count + planned.count)")
+                            .font(.title3.bold())
+                    }
+                    .buttonStyle(BentoButtonStyle())
+
+                    if let nudge {
+                        HStack {
+                            Text(nudge.reason)
+                                .font(.subheadline)
+                            Spacer()
+                            Button("Try \(nudge.weight.clean) lb") {
+                                weight = nudge.weight
+                                reps = nudge.reps
+                                self.nudge = nil
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.primary)
                         }
+                        .padding(12)
+                        .bentoCard(cornerRadius: 14)
+                    }
+
+                    if !done.isEmpty { setList }
+
+                    if let exercise {
+                        ProgressChart(exercise: exercise, gym: gym, history: others, today: done)
                     }
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
+                .padding()
             }
-            .padding()
             .background(Color.bentoPaper.ignoresSafeArea())
             .navigationTitle(exercise?.name ?? "Exercise")
             .navigationBarTitleDisplayMode(.inline)
@@ -353,6 +378,45 @@ struct SetEntrySheet: View {
             .onAppear(perform: prefill)
         }
         .presentationDetents([.large])
+    }
+
+    /// Done sets, each with a delete button for typos
+    private var setList: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(done.enumerated()), id: \.element.id) { i, set in
+                HStack {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.bentoActivity)
+                    Text("Set \(i + 1)").foregroundStyle(.secondary)
+                    Spacer()
+                    Text(WorkoutEngine.label(set, bodyweight: bodyweight, long: true))
+                        .monospacedDigit()
+                    Button {
+                        delete(set)
+                    } label: {
+                        Image(systemName: "trash").font(.footnote)
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 8)
+                    .accessibilityLabel("Delete set \(i + 1)")
+                }
+                .padding(.vertical, 10)
+                if i < done.count - 1 { Divider() }
+            }
+        }
+        .padding(.horizontal, 14)
+        .bentoCard(cornerRadius: 16)
+    }
+
+    /// Removes a logged set; if it filled a planned slot, the slot goes back to planned
+    private func delete(_ set: WorkoutSet) {
+        if entry.sets.count <= entry.plannedCount {
+            set.isPlanned = true
+        } else {
+            entry.sets.removeAll { $0 === set }
+            modelContext.delete(set)
+        }
+        nudge = nil
     }
 
     private func stepper(value: Binding<Double>, step: Double, unit: String, format: @escaping (Double) -> String) -> some View {
@@ -385,34 +449,40 @@ struct SetEntrySheet: View {
         }
     }
 
-    /// Next planned target, else repeat the last set, else the suggestion, else last time
+    /// After a set: what you just did. Before any: the plan, else an estimate (never 0 lb for a weighted lift).
     private func prefill() {
-        // Flag guessed weights (no history at this gym) whichever way the weight gets filled in
-        if lastTime == nil, let exercise {
-            let (plan, note) = WorkoutEngine.plan(for: exercise, gym: gym, sessions: sessions.filter { $0 !== entry.session })
-            guessNote = plan?.isGuess == true ? note : nil
-        }
-        if let next = planned.first, next.weight != nil || next.reps != nil {
-            weight = next.weight ?? 0
-            reps = next.reps ?? 10
-        } else if let last = done.last {
+        guard let exercise else { return }
+        if let last = done.last {
             weight = last.weight ?? 0
-            reps = last.reps ?? 10
-        } else if let exercise {
-            let (plan, note) = WorkoutEngine.plan(for: exercise, gym: gym, sessions: sessions.filter { $0 !== entry.session })
-            weight = plan?.weight ?? 0
-            reps = plan?.targetReps.first ?? 10
-            _ = note
+            reps = planned.first?.reps ?? last.reps ?? 10
+            return
         }
+        let (plan, note) = WorkoutEngine.plan(for: exercise, gym: gym, sessions: others)
+        if let next = planned.first, let w = next.weight, w > 0 || bodyweight {
+            weight = w
+            reps = next.reps ?? 10
+        } else if let plan, plan.weight > 0 || bodyweight {
+            weight = plan.weight
+            reps = plan.targetReps.first ?? 10
+        } else if let estimate = WorkoutEngine.startingEstimate(for: exercise, gym: gym, sessions: others, store: store) {
+            weight = estimate.weight
+            reps = 10
+            guessNote = estimate.note
+            return
+        } else {
+            weight = bodyweight ? 0 : step
+            reps = 10
+            guessNote = bodyweight ? nil : "No history to go on. Start light and adjust."
+            return
+        }
+        guessNote = plan?.isGuess == true ? note : nil
     }
 
     private func addSet() {
-        // An easy set at the top of the range: offer the next step (stacks can jump 15 lb)
-        if let exercise, weight > 0, reps >= WorkoutEngine.repRange.upperBound {
-            let up = WorkoutEngine.nextWeight(after: weight, exercise: exercise, gym: gym, sessions: sessions)
-            nudge = up > weight ? up : nil
-        } else {
-            nudge = nil
+        if let exercise {
+            nudge = WorkoutEngine.inSessionNudge(exercise: exercise, gym: gym, sessions: sessions,
+                                                 weight: weight, reps: reps, setIndex: done.count,
+                                                 previousReps: done.last.flatMap { $0.weight == weight ? $0.reps : nil })
         }
         if let next = planned.first {
             next.weight = weight
@@ -421,10 +491,58 @@ struct SetEntrySheet: View {
         } else {
             entry.sets.append(WorkoutSet(order: entry.sets.count, weight: weight, reps: reps))
         }
-        // Line up the next planned target, if any
-        if let following = planned.first, let w = following.weight, let r = following.reps {
-            weight = w
-            reps = r
+        // Keep the weight you just used; only the target reps come from the plan
+        if let following = planned.first, let r = following.reps { reps = r }
+    }
+}
+
+/// Best set per session (estimated 1-rep max, so different rep counts compare), with today's
+/// sets in green
+struct ProgressChart: View {
+    let exercise: ExerciseDefinition
+    let gym: Gym?
+    let history: [WorkoutSession]
+    let today: [WorkoutSet]
+
+    var body: some View {
+        let gymName = WorkoutEngine.isGymSpecific(exercise) ? gym?.name : nil
+        let past = WorkoutEngine.exerciseHistory(exerciseId: exercise.id, sessions: history, gymName: gymName).suffix(12)
+        let todayPoints = today.compactMap(\.estimated1RM)
+        if WorkoutEngine.isBodyweight(exercise) {
+            EmptyView()
+        } else if past.count + (todayPoints.isEmpty ? 0 : 1) >= 2 {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Progress").font(.headline)
+                    Spacer()
+                    Text("est. 1-rep max\(gymName.map { " · \($0)" } ?? "")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Chart {
+                    ForEach(Array(past.enumerated()), id: \.offset) { _, h in
+                        LineMark(x: .value("Date", h.date), y: .value("e1RM", h.estimated1RM))
+                            .foregroundStyle(Color.primary.opacity(0.5))
+                        PointMark(x: .value("Date", h.date), y: .value("e1RM", h.estimated1RM))
+                            .foregroundStyle(Color.primary)
+                            .symbolSize(30)
+                    }
+                    ForEach(Array(todayPoints.enumerated()), id: \.offset) { _, v in
+                        PointMark(x: .value("Date", Date.now), y: .value("e1RM", v))
+                            .foregroundStyle(Color.bentoActivity)
+                            .symbolSize(60)
+                    }
+                }
+                .chartYScale(domain: .automatic(includesZero: false))
+                .frame(height: 150)
+                if let best = past.max(by: { $0.estimated1RM < $1.estimated1RM }) {
+                    Text("Best: \(best.topWeight.clean)×\(best.topReps) on \(best.date.formatted(.dateTime.month(.abbreviated).day()))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(14)
+            .bentoCard(cornerRadius: 16)
         }
     }
 }

@@ -44,6 +44,8 @@ final class WorkoutEntry {
     var exerciseId = ""
     var order = 0
     var note: String?
+    /// How many sets the suggestion planned (stays after they're done, for "2 of 3 done")
+    var plannedCount = 0
     var session: WorkoutSession?
     @Relationship(deleteRule: .cascade) var sets = [WorkoutSet]()
 

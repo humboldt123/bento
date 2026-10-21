@@ -201,3 +201,54 @@ struct MuscleRecoveryRow: View {
         return .orange
     }
 }
+
+// MARK: - Session figure
+
+/// Front and back figures for one workout: muscles still to do in light grey, muscles you've
+/// worked fill in green by how many sets they've had (targets count 1, helpers ½)
+struct SessionMuscleFigure: View {
+    /// Muscle id → effective sets done today
+    let done: [Int: Double]
+    /// Muscles the rest of today's plan hits
+    let planned: Set<Int>
+
+    var body: some View {
+        HStack(spacing: 10) {
+            side(front: true)
+            side(front: false)
+        }
+        .frame(height: 170)
+    }
+
+    private func side(front: Bool) -> some View {
+        ZStack {
+            if let base = MuscleImageLoader.loadOverlay(named: front ? "front_grey_body" : "back_grey_body") {
+                Image(uiImage: base).resizable().aspectRatio(contentMode: .fit)
+            }
+            ForEach(MuscleInfo.allMuscles) { muscle in
+                let sets = done[muscle.id] ?? 0
+                let isPlanned = planned.contains(muscle.id)
+                if sets > 0 || isPlanned {
+                    ForEach(front ? muscle.frontImages : muscle.backImages, id: \.self) { name in
+                        if let img = MuscleImageLoader.loadOverlay(named: name) {
+                            Image(uiImage: img)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .colorMultiply(color(sets: sets))
+                                .opacity(sets > 0 ? 0.85 : 0.35)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// ~3 sets is a light day for a muscle, 6+ a full one
+    private func color(sets: Double) -> Color {
+        if sets <= 0 { return Color.gray }
+        if sets >= 6 { return .bentoActivity }
+        if sets >= 3 { return Color.bentoActivity.opacity(0.75) }
+        return Color.bentoActivity.opacity(0.45)
+    }
+}

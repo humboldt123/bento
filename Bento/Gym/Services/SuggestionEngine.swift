@@ -73,7 +73,7 @@ extension WorkoutEngine {
         sessions: [WorkoutSession],
         exerciseStore: ExerciseStore,
         gym: Gym?,
-        limit: Int = 6,
+        limit: Int = 4,
         /// "Push" / "Pull" / "Legs" to override the automatic pick
         split forced: String? = nil,
         now: Date = .now
@@ -107,37 +107,50 @@ extension WorkoutEngine {
         let split = forced.flatMap { name in splits.first { $0.name == name } }
             ?? splits.max { timeSinceTrained($0.muscles) < timeSinceTrained($1.muscles) }!
 
-        let pool = split.categories
-            .flatMap { exerciseStore.exercises(category: $0) }
-            .filter { gym?.suggests($0) ?? true }
-
         let carried = CarryOver.pending(sessions: sessions, now: now)
+        let allowed: (ExerciseDefinition) -> Bool = { gym?.suggests($0) ?? true }
 
-        func rank(_ ex: ExerciseDefinition) -> Int {
-            var score = 0
-            if carried[ex.id] != nil { score += 1000 }
-            if gym?.status(of: ex.id) == .confirmed { score += 100 }
-            if lastDone[ex.id] != nil { score += 50 }
-            if ex.isMine { score += 10 }
-            return score
-        }
-        let ordered = pool.sorted { a, b in
-            let ra = rank(a), rb = rank(b)
-            if ra != rb { return ra > rb }
-            let la = lastDone[a.id] ?? .distantPast, lb = lastDone[b.id] ?? .distantPast
-            if la != lb { return la > lb }
-            return a.name < b.name
+        // What this split did last time, so the rotating slots pick something different
+        let lastSameSplit = sessions
+            .filter { $0.isLogged && splitName(of: $0, store: exerciseStore) == split.name }
+            .max { $0.date < $1.date }
+        let doneLastTime = Set(lastSameSplit?.exerciseIds ?? [])
+
+        /// Best available exercise for a slot: carried over first, then what you've done before here
+        func pick(_ ids: [String], avoid: Set<String>) -> ExerciseDefinition? {
+            let options = ids.compactMap { exerciseStore.exercise(id: $0) }.filter { allowed($0) && !avoid.contains($0.id) }
+            return options.max { a, b in
+                func score(_ e: ExerciseDefinition) -> Double {
+                    var s = 0.0
+                    if carried[e.id] != nil { s += 1000 }
+                    if gym?.status(of: e.id) == .confirmed { s += 100 }
+                    if let d = lastDone[e.id] { s += 50 + min(30, 30 - now.timeIntervalSince(d) / 86_400 / 7) }
+                    if e.isMine { s += 10 }
+                    return s
+                }
+                return score(a) < score(b)
+            }
         }
 
-        // At most two exercises with the exact same primary muscles
+        let slots = Self.slots[split.name] ?? []
         var picked: [ExerciseDefinition] = []
-        var usedTargets: [Set<Int>] = []
-        for ex in ordered where picked.count < limit {
-            let targets = Set(ex.targetMuscleIds)
-            if usedTargets.filter({ $0 == targets }).count >= 2 { continue }
-            picked.append(ex)
-            usedTargets.append(targets)
+        // Main lifts every time
+        for slot in slots.prefix(2) {
+            if let e = pick(slot, avoid: Set(picked.map(\.id))) { picked.append(e) }
         }
+        // Accessories rotate: the ones skipped last time first, then whatever's carried over
+        let accessories = slots.dropFirst(2).sorted { a, b in
+            let aCarried = a.contains { carried[$0] != nil }, bCarried = b.contains { carried[$0] != nil }
+            if aCarried != bCarried { return aCarried }
+            let aDone = a.contains(where: doneLastTime.contains), bDone = b.contains(where: doneLastTime.contains)
+            return !aDone && bDone
+        }
+        for slot in accessories where picked.count < limit - 1 {
+            if let e = pick(slot, avoid: Set(picked.map(\.id))) { picked.append(e) }
+        }
+        // A short core finisher, rotating
+        let core = Self.coreSlot.filter { !doneLastTime.contains($0) } + Self.coreSlot
+        if let e = pick(Array(core.prefix(4)), avoid: Set(picked.map(\.id))) { picked.append(e) }
 
         return picked.map { ex in
             let (plan, note) = plan(for: ex, gym: gym, sessions: sessions, now: now)
@@ -147,6 +160,43 @@ extension WorkoutEngine {
             }
             return ExerciseSuggestion(exercise: ex, split: split.name, plan: plan, note: note)
         }
+    }
+
+    /// Each split as ordered slots: two main lifts, then accessories that rotate. Each slot lists
+    /// interchangeable exercises (the gym's confirmed list and your history pick among them).
+    static let slots: [String: [[String]]] = [
+        "Push": [
+            ["my-flat-bench-press", "my-chest-press-machine", "my-dumbbell-bench-press", "my-incline-bench-press"],
+            ["my-machine-shoulder-press", "my-dumbbell-shoulder-press", "my-overhead-press-barbell", "my-arnold-press"],
+            ["my-pec-deck-machine", "my-cable-fly", "my-dumbbell-fly", "my-incline-dumbbell-fly"],
+            ["my-cable-pushdown", "my-triceps-extension-machine", "my-overhead-cable-extension", "my-skull-crusher"],
+            ["my-delts-machine", "my-lateral-raise-cable", "my-lateral-raise-dumbbell"],
+        ],
+        "Pull": [
+            ["my-lat-pulldown", "my-reverse-grip-lat-pulldown", "my-pull-up", "my-chin-up"],
+            ["my-low-row-machine", "my-cable-row", "my-chest-supported-row", "my-dumbbell-row"],
+            ["my-dumbbell-curl", "my-cable-curl", "my-biceps-curl-machine", "my-hammer-curl"],
+            ["my-reverse-fly-machine", "my-rear-delt-cable-fly", "my-face-pull"],
+            ["my-reverse-curl", "my-hammer-curl"],
+        ],
+        "Legs": [
+            ["my-leg-press", "my-hack-squat", "my-squat", "my-goblet-squat"],
+            ["my-leg-curl", "my-seated-leg-curl", "my-romanian-deadlift"],
+            ["my-leg-extension", "my-bulgarian-split-squat", "my-walking-lunge"],
+            ["my-hip-adductor-machine", "my-hip-abductor-machine", "my-glute-kickback-machine"],
+            ["my-calf-extension", "my-standing-calf-raise", "my-seated-calf-raise"],
+        ],
+    ]
+
+    /// One core exercise at the end of every session, rotating (gym ones first; most work at home too)
+    static let coreSlot = ["my-cable-crunch", "my-abdominal-crunch-machine", "my-hanging-leg-raise",
+                           "my-decline-sit-up", "my-dead-bug", "my-plank", "my-leg-raise-lying"]
+
+    /// "Push" / "Pull" / "Legs" for a logged session, by its exercises' categories
+    static func splitName(of session: WorkoutSession, store: ExerciseStore) -> String? {
+        let map = ["Push": "Push", "Pull": "Pull", "Forearms": "Pull", "Legs": "Legs", "Back / Lower Back": "Legs"]
+        let names = session.entries.compactMap { store.exercise(id: $0.exerciseId)?.category.flatMap { map[$0] } }
+        return Dictionary(grouping: names, by: { $0 }).max { $0.value.count < $1.value.count }?.key
     }
 
     /// Swaps each taken machine for a substitute hitting the same muscles, and moves the
@@ -281,53 +331,82 @@ extension WorkoutEngine {
                 return (SetPlan(weight: 0, targetReps: reps.map { max(1, $0 - 2) }, lastWeight: 0, lastReps: reps),
                         "Ease back in (\(daysOff / 7) wks off)")
             }
-            return (SetPlan(weight: 0, targetReps: reps.map { $0 + 1 }, lastWeight: 0, lastReps: reps), "+1 rep")
+            let added = last.sets.compactMap(\.weight).max() ?? 0
+            if (reps.min() ?? 0) >= 20 {
+                return (SetPlan(weight: added + 5, targetReps: reps.map { _ in 12 }, lastWeight: added, lastReps: reps),
+                        "20+ reps: hold a 5 lb plate")
+            }
+            return (SetPlan(weight: added, targetReps: reps.map { $0 + 1 }, lastWeight: added, lastReps: reps), "+1 rep")
         }
 
         // Reference: the better of the last two sessions, so an off day doesn't lower the bar
+        func e1rm(_ x: (top: Double, reps: [Int])) -> Double { x.top * (1 + Double(min(x.reps.max() ?? 0, 15)) / 30) }
         var reference = lastSummary
         var offDay = false
-        if recent.count > 1 {
+        if recent.count > 1, daysOff <= 14 {
             let prev = summary(recent[1].sets)
-            let lastScore = lastSummary.top * 100 + Double(lastSummary.reps.reduce(0, +))
-            let prevScore = prev.top * 100 + Double(prev.reps.reduce(0, +))
-            if prevScore > lastScore, daysOff <= comebackDays {
-                reference = prev
-                offDay = true
-            }
+            if e1rm(prev) > e1rm(lastSummary) * 1.03 { reference = prev; offDay = true }
         }
         let top = reference.top
         let lastReps = reference.reps
         let step = weightStep(for: exercise, gym: gym, sessions: sessions)
+        let topReps = repRange.upperBound
 
-        // Stalled: three sessions at the same top weight without more total reps
+        // Stalled: best-set e1RM hasn't beaten the session two before it, three times running
         let stalled: Bool = {
-            guard recent.count >= 3 else { return false }
-            let three = recent.prefix(3).map { summary($0.sets) }
-            guard three.allSatisfy({ $0.top == three[0].top }) else { return false }
-            let totals = three.map { $0.reps.reduce(0, +) }   // newest first
-            return totals[0] <= totals[2]
+            guard recent.count >= 3, daysOff <= 14 else { return false }
+            let values = recent.prefix(3).map { e1rm(summary($0.sets)) }   // newest first
+            return values[0] <= values[2] * 1.01 && values[1] <= values[2] * 1.01
         }()
+
+        /// Detraining: strength holds ~4 weeks, reps-at-a-load fade sooner (Bosquet 2013)
+        let comeback: Double = switch daysOff {
+        case ..<15: 1
+        case ..<29: 0.95
+        case ..<57: 0.90
+        case ..<92: 0.82
+        default: 0.75
+        }
+
+        // Reps Epley predicts at a heavier weight, given this e1RM
+        func predictedReps(at w: Double) -> Int { Int((30 * (e1rm(reference) / w - 1)).rounded(.down)) }
 
         var weight: Double
         var reps: [Int]
         var note: String
+        let allTop = lastReps.allSatisfy { $0 >= topReps }
+        // ACSM / NSCA "2-for-2": go up after hitting the top two sessions running, or beating it by 2
+        let prevAllTop = recent.count > 1 && summary(recent[1].sets).top == top
+            && summary(recent[1].sets).reps.allSatisfy { $0 >= topReps }
+        let beatBy2 = (lastReps.first ?? 0) >= topReps + 2
 
-        if daysOff > comebackDays {
-            weight = max(step, ((top * 0.85) / step).rounded(.down) * step)
-            reps = Array(repeating: repRange.upperBound - 2, count: max(lastReps.count, 3))
+        if comeback < 1 {
+            weight = max(step, ((top * comeback) / step).rounded(.down) * step)
+            reps = Array(repeating: topReps - 2, count: max(lastReps.count, 3))
             note = "Ease back in (\(daysOff / 7) wks off)"
         } else if stalled {
             weight = max(step, ((top * 0.9) / step).rounded(.down) * step)
-            reps = Array(repeating: repRange.upperBound, count: max(lastReps.count, 3))
-            note = "Stuck 3 sessions: reset lighter, build back up"
-        } else if lastReps.allSatisfy({ $0 >= repRange.upperBound }) {
-            weight = top + step
-            reps = Array(repeating: repRange.lowerBound, count: lastReps.count)
-            note = "+\(step.clean) lb"
+            reps = Array(repeating: topReps, count: max(lastReps.count, 3))
+            note = "Stuck 3 sessions: 10% lighter, build back up"
+        } else if allTop && (prevAllTop || beatBy2) {
+            let next = top + step
+            if step / top > 0.10, predictedReps(at: next) < repRange.lowerBound {
+                // Big stack jump: earn it with more reps first, until the new weight would still give 8+
+                weight = top
+                reps = lastReps.map { min($0 + 1, 16) }
+                note = "Next plate is a big jump (+\(step.clean)). Push past \(topReps) reps first"
+            } else {
+                weight = next
+                reps = Array(repeating: repRange.lowerBound, count: lastReps.count)
+                note = "+\(step.clean) lb"
+            }
+        } else if allTop {
+            weight = top
+            reps = lastReps
+            note = "Top of the range again → then go up"
         } else {
             weight = top
-            reps = lastReps.map { min(repRange.upperBound, $0 + 1) }
+            reps = lastReps.map { min(topReps, $0 + 1) }
             note = offDay ? "Off day last time, aiming from the one before" : "+1 rep"
         }
 

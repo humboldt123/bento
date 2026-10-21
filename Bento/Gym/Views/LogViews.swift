@@ -496,12 +496,14 @@ struct SetEntrySheet: View {
     }
 }
 
-/// Top-set weight per session, each dot colored by its reps (lighter = fewer), today's sets as diamonds
+/// Top-set weight per session from zero, today's sets in green. Touch a point to see its reps.
 struct ProgressChart: View {
     let exercise: ExerciseDefinition
     let gym: Gym?
     let history: [WorkoutSession]
     let today: [WorkoutSet]
+
+    @State private var selected: Date?
 
     private struct Point: Identifiable {
         let id = UUID()
@@ -514,54 +516,83 @@ struct ProgressChart: View {
     var body: some View {
         let gymName = WorkoutEngine.isGymSpecific(exercise) ? gym?.name : nil
         let past = WorkoutEngine.exerciseHistory(exerciseId: exercise.id, sessions: history, gymName: gymName).suffix(12)
-        let points = past.map { Point(date: $0.date, weight: $0.topWeight, reps: $0.topReps, isToday: false) }
-            + today.compactMap { s in s.weight.flatMap { w in s.reps.map { Point(date: .now, weight: w, reps: $0, isToday: true) } } }
-        let weights = points.map(\.weight)
-        if WorkoutEngine.isBodyweight(exercise) || points.count < 2 || weights.isEmpty {
+        let pastPoints = past.map { Point(date: $0.date, weight: $0.topWeight, reps: $0.topReps, isToday: false) }
+        // Today: just the heaviest set (ties: most reps), like the past points
+        let todayBest = today.compactMap { s in s.weight.flatMap { w in s.reps.map { (w, $0) } } }
+            .max { ($0.0, $0.1) < ($1.0, $1.1) }
+            .map { Point(date: .now, weight: $0.0, reps: $0.1, isToday: true) }
+        let points = pastPoints + (todayBest.map { [$0] } ?? [])
+
+        if WorkoutEngine.isBodyweight(exercise) || points.count < 2 {
             EmptyView()
         } else {
-            let lo = weights.min()!, hi = weights.max()!
-            let pad = max(5, (hi - lo) * 0.25)
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Progress").font(.headline)
+            let hi = points.map(\.weight).max() ?? 0
+            let ceiling = (hi * 1.2 / 10).rounded(.up) * 10
+            let shown = selected.flatMap { d in points.min { abs($0.date.timeIntervalSince(d)) < abs($1.date.timeIntervalSince(d)) } }
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Top set").font(.headline)
                     Spacer()
-                    Text("top set\(gymName.map { " · \($0)" } ?? "")")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    if let p = shown {
+                        Text("\(p.isToday ? "Today" : p.date.formatted(.dateTime.month(.abbreviated).day())) · \(p.weight.clean) lb × \(p.reps)")
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                    } else {
+                        Text(gymName.map { "lb · \($0)" } ?? "lb")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Chart {
-                    ForEach(points.filter { !$0.isToday }) { p in
+                    ForEach(pastPoints) { p in
                         LineMark(x: .value("Date", p.date), y: .value("lb", p.weight))
-                            .foregroundStyle(Color.primary.opacity(0.3))
-                    }
-                    ForEach(points) { p in
+                            .foregroundStyle(Color.primary.opacity(0.55))
+                            .lineStyle(StrokeStyle(lineWidth: 2))
                         PointMark(x: .value("Date", p.date), y: .value("lb", p.weight))
-                            .foregroundStyle(by: .value("Reps", p.reps))
-                            .symbol(p.isToday ? .diamond : .circle)
-                            .symbolSize(p.isToday ? 90 : 55)
-                            .annotation(position: .top, spacing: 2) {
-                                if p.isToday {
-                                    Text("\(p.reps)").font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary)
+                            .foregroundStyle(Color.primary)
+                            .symbolSize(40)
+                    }
+                    if let t = todayBest {
+                        PointMark(x: .value("Date", t.date), y: .value("lb", t.weight))
+                            .foregroundStyle(Color.bentoActivity)
+                            .symbolSize(110)
+                            .annotation(position: .top, alignment: .trailing, spacing: 4) {
+                                Text("today").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                            }
+                    }
+                    if let p = shown {
+                        RuleMark(x: .value("Date", p.date))
+                            .foregroundStyle(Color.primary.opacity(0.2))
+                            .lineStyle(StrokeStyle(lineWidth: 1))
+                    }
+                }
+                .chartYScale(domain: 0...max(ceiling, 10))
+                .chartYAxis {
+                    AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) {
+                        AxisGridLine().foregroundStyle(Color.primary.opacity(0.08))
+                        AxisValueLabel()
+                    }
+                }
+                .chartXAxis {
+                    AxisMarks(values: .automatic(desiredCount: 4)) {
+                        AxisValueLabel(format: .dateTime.month(.abbreviated))
+                    }
+                }
+                // Tap a point to pin its date, weight and reps above the chart; tap again to clear
+                .chartOverlay { proxy in
+                    GeometryReader { geo in
+                        Rectangle().fill(.clear).contentShape(Rectangle())
+                            .onTapGesture { location in
+                                guard let frame = proxy.plotFrame else { return }
+                                let x = location.x - geo[frame].origin.x
+                                if let d: Date = proxy.value(atX: x) {
+                                    let nearest = points.min { abs($0.date.timeIntervalSince(d)) < abs($1.date.timeIntervalSince(d)) }?.date
+                                    selected = (selected == nearest) ? nil : nearest
                                 }
                             }
                     }
                 }
-                .chartForegroundStyleScale(range: Gradient(colors: [Color.bentoActivity.opacity(0.25), Color.bentoActivity, Color(red: 0.05, green: 0.3, blue: 0.15)]))
-                .chartYScale(domain: (lo - pad)...(hi + pad))
-                .chartLegend(.hidden)
-                .frame(height: 160)
-                HStack(spacing: 6) {
-                    Text("reps").font(.caption2).foregroundStyle(.secondary)
-                    LinearGradient(colors: [Color.bentoActivity.opacity(0.25), Color.bentoActivity, Color(red: 0.05, green: 0.3, blue: 0.15)],
-                                   startPoint: .leading, endPoint: .trailing)
-                        .frame(width: 70, height: 6)
-                        .clipShape(Capsule())
-                    Text("\(points.map(\.reps).min() ?? 0)–\(points.map(\.reps).max() ?? 0)").font(.caption2).foregroundStyle(.secondary)
-                    Spacer()
-                    Image(systemName: "diamond.fill").font(.system(size: 8)).foregroundStyle(Color.bentoActivity)
-                    Text("today").font(.caption2).foregroundStyle(.secondary)
-                }
+                .frame(height: 150)
             }
             .padding(14)
             .bentoCard(cornerRadius: 16)

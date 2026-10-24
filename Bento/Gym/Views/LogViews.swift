@@ -37,7 +37,11 @@ struct ActiveSessionView: View {
                             Button {
                                 editingEntry = entry
                             } label: {
-                                EntryRow(entry: entry)
+                                // Counts are worked out here and passed down so the row redraws
+                                // when a set is added in the sheet
+                                EntryRow(entry: entry,
+                                         done: entry.sets.filter { !$0.isPlanned }.count,
+                                         total: max(entry.sets.count, entry.plannedCount))
                             }
                             .buttonStyle(.plain)
                             .contextMenu { entryMenu(entry, in: session) }
@@ -228,12 +232,13 @@ struct ActiveSessionView: View {
 
 private struct EntryRow: View {
     let entry: WorkoutEntry
+    /// Sets logged, and logged + still planned
+    let done: Int
+    let total: Int
     @Environment(ExerciseStore.self) private var store
 
     var body: some View {
         let ex = store.exercise(id: entry.exerciseId)
-        let done = entry.sets.filter { !$0.isPlanned }.count
-        let total = max(entry.sets.count, entry.plannedCount)
         let complete = done > 0 && done == total
         HStack(spacing: 12) {
             if let ex {
@@ -416,6 +421,7 @@ struct SetEntrySheet: View {
             modelContext.delete(set)
         }
         nudge = nil
+        try? modelContext.save()
     }
 
     private func stepper(value: Binding<Double>, step: Double, unit: String, format: @escaping (Double) -> String) -> some View {
@@ -492,6 +498,9 @@ struct SetEntrySheet: View {
         }
         // Keep the weight you just used; only the target reps come from the plan
         if let following = planned.first, let r = following.reps { reps = r }
+        // Save now rather than on autosave: the session list behind this sheet showed "0 of 3"
+        // after backing out, and a crash mid-workout shouldn't lose sets
+        try? modelContext.save()
     }
 }
 

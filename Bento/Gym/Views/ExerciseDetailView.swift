@@ -351,23 +351,132 @@ struct SimpleChart: View {
 
 // MARK: - Looping Video
 
-/// Muted, autoplaying loop like the Lyfta exercise demos
-struct LoopingVideo: View {
+/// Muted, autoplaying loop like the Lyfta exercise demos. Our own tiny player instead of AVPlayer:
+/// AVAssetReader pulls the video track out of the mp4 and an AVSampleBufferDisplayLayer shows it.
+/// Neither touches the audio session, so Spotify etc keeps playing, and there are no controls or
+/// AirPlay button because there's no player to control.
+struct LoopingVideo: UIViewRepresentable {
     let url: URL
-    @State private var player: AVQueuePlayer?
-    @State private var looper: AVPlayerLooper?
 
-    var body: some View {
-        VideoPlayer(player: player)
-            .onAppear {
-                let queue = AVQueuePlayer()
-                queue.isMuted = true
-                looper = AVPlayerLooper(player: queue, templateItem: AVPlayerItem(url: url))
-                player = queue
-                queue.play()
+    final class LoopView: UIView {
+        override class var layerClass: AnyClass { AVSampleBufferDisplayLayer.self }
+        var feeder: LoopFeeder?
+    }
+
+    func makeUIView(context: Context) -> LoopView {
+        let view = LoopView()
+        let display = view.layer as! AVSampleBufferDisplayLayer
+        display.videoGravity = .resizeAspect
+        view.feeder = LoopFeeder(url: url, display: display)
+        return view
+    }
+
+    func updateUIView(_ view: LoopView, context: Context) {}
+
+    static func dismantleUIView(_ view: LoopView, coordinator: ()) {
+        view.feeder?.stop()
+        view.feeder = nil
+    }
+}
+
+/// Feeds a display layer the same clip over and over, shifting each pass's timestamps by the clip
+/// length so the layer sees one endless video. Everything after init runs on `queue`.
+final class LoopFeeder: @unchecked Sendable {
+    private let display: AVSampleBufferDisplayLayer
+    private let queue = DispatchQueue(label: "LoopFeeder")
+    private var asset: AVURLAsset?
+    private var track: AVAssetTrack?
+    private var reader: AVAssetReader?
+    private var output: AVAssetReaderTrackOutput?
+    private var offset = CMTime.zero
+    private var duration = CMTime.zero
+    private var stopped = false
+
+    init(url: URL, display: AVSampleBufferDisplayLayer) {
+        self.display = display
+        Task {
+            guard let file = await Self.localFile(for: url) else { return }
+            let asset = AVURLAsset(url: file)
+            guard let loaded = try? await asset.loadTracks(withMediaType: .video).first,
+                  let duration = try? await asset.load(.duration) else { return }
+            // Only ever used on `queue` from here on
+            nonisolated(unsafe) let track = loaded
+            self.queue.async { self.start(asset: asset, track: track, duration: duration) }
+        }
+    }
+
+    func stop() {
+        queue.async {
+            self.stopped = true
+            self.display.stopRequestingMediaData()
+            self.reader?.cancelReading()
+        }
+    }
+
+    private func start(asset: AVURLAsset, track: AVAssetTrack, duration: CMTime) {
+        guard !stopped else { return }
+        self.asset = asset
+        self.track = track
+        self.duration = duration
+        var timebase: CMTimebase?
+        CMTimebaseCreateWithSourceClock(allocator: kCFAllocatorDefault, sourceClock: CMClockGetHostTimeClock(),
+                                        timebaseOut: &timebase)
+        guard let timebase, openReader() else { return }
+        display.controlTimebase = timebase
+        CMTimebaseSetTime(timebase, time: .zero)
+        CMTimebaseSetRate(timebase, rate: 1)
+        display.requestMediaDataWhenReady(on: queue) { [weak self] in self?.feed() }
+    }
+
+    /// Fresh reader from the start of the clip; compressed samples, the layer decodes them
+    private func openReader() -> Bool {
+        guard let asset, let track, let reader = try? AVAssetReader(asset: asset) else { return false }
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+        reader.add(output)
+        guard reader.startReading() else { return false }
+        self.reader = reader
+        self.output = output
+        return true
+    }
+
+    private func feed() {
+        while !stopped && display.isReadyForMoreMediaData {
+            if let sample = output?.copyNextSampleBuffer() {
+                if let shifted = Self.shift(sample, by: offset) { display.enqueue(shifted) }
+            } else {
+                // End of the clip: go again, later on the timeline
+                offset = offset + duration
+                guard openReader() else { display.stopRequestingMediaData(); return }
             }
-            .onDisappear {
-                player?.pause()
-            }
+        }
+    }
+
+    private static func shift(_ sample: CMSampleBuffer, by offset: CMTime) -> CMSampleBuffer? {
+        guard offset != .zero else { return sample }
+        var count: CMItemCount = 0
+        CMSampleBufferGetSampleTimingInfoArray(sample, entryCount: 0, arrayToFill: nil, entriesNeededOut: &count)
+        var timing = [CMSampleTimingInfo](repeating: CMSampleTimingInfo(), count: count)
+        CMSampleBufferGetSampleTimingInfoArray(sample, entryCount: count, arrayToFill: &timing, entriesNeededOut: nil)
+        for i in timing.indices {
+            timing[i].presentationTimeStamp = timing[i].presentationTimeStamp + offset
+            if timing[i].decodeTimeStamp.isValid { timing[i].decodeTimeStamp = timing[i].decodeTimeStamp + offset }
+        }
+        var out: CMSampleBuffer?
+        CMSampleBufferCreateCopyWithNewTiming(allocator: kCFAllocatorDefault, sampleBuffer: sample,
+                                              sampleTimingEntryCount: count, sampleTimingArray: &timing,
+                                              sampleBufferOut: &out)
+        return out
+    }
+
+    /// AVAssetReader only reads files, so remote demos get downloaded to Caches once
+    private static func localFile(for url: URL) async -> URL? {
+        if url.isFileURL { return url }
+        let dir = URL.cachesDirectory.appending(path: "ExerciseVideos")
+        let file = dir.appending(path: url.lastPathComponent)
+        if FileManager.default.fileExists(atPath: file.path) { return file }
+        guard let (tmp, _) = try? await URLSession.shared.download(from: url) else { return nil }
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? FileManager.default.moveItem(at: tmp, to: file)
+        return FileManager.default.fileExists(atPath: file.path) ? file : nil
     }
 }

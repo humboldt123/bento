@@ -213,13 +213,16 @@ struct MuscleRecoveryRow: View {
 
 // MARK: - Session figure
 
-/// Front and back figures for one workout: muscles still to do in light grey, muscles you've
-/// worked fill in green by how many sets they've had (targets count 1, helpers ½)
+/// Front and back figures for one workout: muscles you've worked go red by how many sets they've
+/// had (targets count 1, helpers ½), muscles today's plan still hits pulse red
 struct SessionMuscleFigure: View {
     /// Muscle id → effective sets done today
     let done: [Int: Double]
     /// Muscles the rest of today's plan hits
     let planned: Set<Int>
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulse = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -227,6 +230,10 @@ struct SessionMuscleFigure: View {
             side(front: false)
         }
         .frame(height: 170)
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) { pulse = true }
+        }
     }
 
     private func side(front: Bool) -> some View {
@@ -243,8 +250,7 @@ struct SessionMuscleFigure: View {
                             Image(uiImage: img)
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
-                                .colorMultiply(color(sets: sets))
-                                .opacity(sets > 0 ? 0.85 : 0.35)
+                                .opacity(opacity(sets: sets, planned: isPlanned))
                         }
                     }
                 }
@@ -253,11 +259,12 @@ struct SessionMuscleFigure: View {
         .frame(maxWidth: .infinity)
     }
 
-    /// ~3 sets is a light day for a muscle, 6+ a full one
-    private func color(sets: Double) -> Color {
-        if sets <= 0 { return Color.gray }
-        if sets >= 6 { return .bentoActivity }
-        if sets >= 3 { return Color.bentoActivity.opacity(0.75) }
-        return Color.bentoActivity.opacity(0.45)
+    /// The overlays are already red, so sets done just set how solid they are: ~3 sets is a light
+    /// day for a muscle, 6+ a full one. Still-planned muscles fade in and out on top of that.
+    private func opacity(sets: Double, planned: Bool) -> Double {
+        let solid = sets >= 6 ? 0.95 : sets >= 3 ? 0.75 : sets > 0 ? 0.5 : 0
+        guard planned else { return solid }
+        if reduceMotion { return max(solid, 0.4) }
+        return pulse ? max(solid, 0.6) : max(solid * 0.6, 0.1)
     }
 }

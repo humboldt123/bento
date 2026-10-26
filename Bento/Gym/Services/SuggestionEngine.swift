@@ -135,17 +135,18 @@ extension WorkoutEngine {
         let slots = Self.slots[split.name] ?? []
         var picked: [ExerciseDefinition] = []
         // Main lifts every time
-        for slot in slots.prefix(2) {
+        let mains = Self.mainLifts[split.name] ?? 2
+        for slot in slots.prefix(mains) {
             if let e = pick(slot, avoid: Set(picked.map(\.id))) { picked.append(e) }
         }
         // Accessories rotate: the ones skipped last time first, then whatever's carried over
-        let accessories = slots.dropFirst(2).sorted { a, b in
+        let accessories = slots.dropFirst(mains).sorted { a, b in
             let aCarried = a.contains { carried[$0] != nil }, bCarried = b.contains { carried[$0] != nil }
             if aCarried != bCarried { return aCarried }
             let aDone = a.contains(where: doneLastTime.contains), bDone = b.contains(where: doneLastTime.contains)
             return !aDone && bDone
         }
-        for slot in accessories where picked.count < limit - 1 {
+        for slot in accessories where picked.count < max(limit - 1, mains + 1) {
             if let e = pick(slot, avoid: Set(picked.map(\.id))) { picked.append(e) }
         }
         // A short core finisher, rotating
@@ -162,7 +163,11 @@ extension WorkoutEngine {
         }
     }
 
-    /// Each split as ordered slots: two main lifts, then accessories that rotate. Each slot lists
+    /// Slots every session keeps. Pull keeps curls too: biceps are its arm work the way pressing covers
+    /// triceps on Push, and rotating them out left pull days with none. One accessory still rotates after.
+    static let mainLifts: [String: Int] = ["Pull": 3]
+
+    /// Each split as ordered slots: main lifts (see `mainLifts`), then accessories that rotate. Each slot lists
     /// interchangeable exercises (the gym's confirmed list and your history pick among them).
     static let slots: [String: [[String]]] = [
         "Push": [
@@ -452,24 +457,10 @@ extension WorkoutEngine {
         return exercise.equipmentIds.contains(4) ? (gym?.snapDumbbell(next) ?? next) : next
     }
 
-    /// Smallest jump between weights you've used on this machine, else a sensible default.
-    /// Matrix stacks go up 15 lb on some stations, so learning it beats guessing.
+    /// 5 lb for anything on a stack or bar, the gym's real step for dumbbells. Learning it from
+    /// history made up steps like 15 or 40 from whatever weights happened to be logged.
     static func weightStep(for exercise: ExerciseDefinition, gym: Gym?, sessions: [WorkoutSession]) -> Double {
-        let isDumbbell = exercise.equipmentIds.contains(4)
-        if isDumbbell, let step = gym?.dumbbellStep { return step }
-
-        let gymSpecific = isGymSpecific(exercise) && gym != nil
-        let weights = Set(sessions
-            .filter { !gymSpecific || $0.gymName == gym?.name }
-            .flatMap(\.entries)
-            .filter { $0.exerciseId == exercise.id }
-            .flatMap(\.sets)
-            .compactMap(\.weight))
-            .sorted()
-        let diffs = zip(weights.dropFirst(), weights).map { $0 - $1 }.filter { $0 >= 2.5 }
-        if let smallest = diffs.min() { return smallest }
-
-        if exercise.equipmentIds.contains(6) || exercise.equipmentIds.contains(7) { return 10 }
+        if exercise.equipmentIds.contains(4), let step = gym?.dumbbellStep { return step }
         return 5
     }
 }

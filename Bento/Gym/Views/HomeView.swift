@@ -40,18 +40,21 @@ struct HomeView: View {
 
     @ViewBuilder
     private var suggestionsSection: some View {
+        // While a workout is going, keep showing its split; counting it as "trained" would flip Auto
+        // to tomorrow's split mid-session
+        let history = sessions.filter { $0 !== gymSession.active }
         let base = WorkoutEngine.suggestions(
-            sessions: Array(sessions),
+            sessions: history,
             exerciseStore: store,
             gym: currentGym,
-            split: splitChoice
+            split: gymSession.active.flatMap { WorkoutEngine.splitName(of: $0, store: store) } ?? splitChoice
         ).filter { !skippedToday.contains($0.exercise.id) }
         let suggestions = WorkoutEngine.applyingTaken(
             base,
             taken: taken,
             exerciseStore: store,
             gym: currentGym,
-            sessions: Array(sessions)
+            sessions: history
         )
 
         VStack(alignment: .leading, spacing: 12) {

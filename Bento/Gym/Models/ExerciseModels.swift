@@ -12,8 +12,8 @@ struct ExerciseDefinition: Codable, Identifiable, Hashable {
     let equipmentId: String?
     let bodyPartId: String?
     let exerciseType: String?
-    let targetMusclesId: String?
-    let synergistMusclesId: String?
+    var targetMusclesId: String?
+    var synergistMusclesId: String?
     let videoFile: String?
     let localizedNames: [String: String?]?
 
@@ -98,7 +98,8 @@ struct MuscleInfo: Identifiable, Hashable {
         MuscleInfo(id: 3, name: "Adductor Magnus", frontImages: [], backImages: ["back_hip_adductors"]),
         MuscleInfo(id: 4, name: "Biceps", frontImages: ["front_biceps"], backImages: ["back_biceps"]),
         MuscleInfo(id: 5, name: "Brachialis", frontImages: ["front_brachialis"], backImages: ["back_brachialis"]),
-        MuscleInfo(id: 6, name: "Brachioradialis", frontImages: ["front_brachioradialis"], backImages: []),
+        // Drawn over the whole forearm: its own overlay is a sliver you can't see on the small figures
+        MuscleInfo(id: 6, name: "Brachioradialis", frontImages: ["front_brachioradialis", "front_wrist_extensors"], backImages: ["back_wrist_flexors"]),
         MuscleInfo(id: 7, name: "Deep Hip Rotators", frontImages: [], backImages: []),
         MuscleInfo(id: 8, name: "Front Delts", frontImages: ["front_deltoid_anterior"], backImages: []),
         MuscleInfo(id: 9, name: "Side Delts", frontImages: ["front_deltoid_lateral"], backImages: []),

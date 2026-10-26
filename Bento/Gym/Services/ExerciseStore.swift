@@ -88,9 +88,13 @@ final class ExerciseStore {
         let aliases: [String]
         let media: String?
         let hasVideo: Bool
+        /// Muscle ids replacing Lyfta's where its data is wrong (no biceps on rows and pulldowns,
+        /// chest on a chin-up)
+        let target: [Int]?
+        let helpers: [Int]?
 
         enum CodingKeys: String, CodingKey {
-            case id, name, category, mine, aliases, media
+            case id, name, category, mine, aliases, media, target, helpers
             case lyftaId = "lyfta_id"
             case hasVideo = "has_video"
         }
@@ -124,6 +128,8 @@ final class ExerciseStore {
                 ex.isCurated = true
                 ex.localMedia = entry.media
                 ex.hasLocalVideo = entry.hasVideo
+                if let t = entry.target { ex.targetMusclesId = t.map(String.init).joined(separator: ",") }
+                if let h = entry.helpers { ex.synergistMusclesId = h.map(String.init).joined(separator: ",") }
                 return ex
             }
             for ex in snap.exercises { snap.byId[ex.id] = ex }

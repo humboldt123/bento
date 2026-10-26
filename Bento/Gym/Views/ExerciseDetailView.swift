@@ -149,7 +149,7 @@ struct ExerciseDetailView: View {
 
             if !exercise.targetMuscles.isEmpty {
                 HStack(spacing: 4) {
-                    Text("Target:")
+                    Text("Target (1 set each):")
                         .font(.caption.bold())
                         .foregroundStyle(.secondary)
                     Text(exercise.targetMuscles.map(\.name).joined(separator: ", "))
@@ -159,7 +159,7 @@ struct ExerciseDetailView: View {
 
             if !exercise.synergistMuscles.isEmpty {
                 HStack(spacing: 4) {
-                    Text("Synergist:")
+                    Text("Helpers (½ set each):")
                         .font(.caption.bold())
                         .foregroundStyle(.secondary)
                     Text(exercise.synergistMuscles.map(\.name).joined(separator: ", "))

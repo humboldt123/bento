@@ -26,7 +26,7 @@ struct MathText: View {
 enum MathHTML {
     static func page(_ text: String, size: CGFloat, bold: Bool) -> String {
         """
-        <!doctype html><html><head>
+        <!doctype html><html><head><meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
         <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
@@ -37,7 +37,10 @@ enum MathHTML {
         body { font: \(bold ? "700" : "400") \(Int(size))px ui-rounded, -apple-system, system-ui, "Apple Color Emoji"; line-height: 1.4;
                -webkit-text-size-adjust: none; word-wrap: break-word; }
         p { margin: 0 0 0.6em; } p:last-child { margin-bottom: 0; }
-        code { font: 0.88em ui-monospace, Menlo; background: rgba(127,127,127,.15); padding: 1px 4px; border-radius: 4px; }
+        pre { margin: 0.5em 0; padding: 10px 12px; background: rgba(127,127,127,.12); border-radius: 10px; overflow-x: auto; }
+        pre code { background: none; padding: 0; font-size: .8em; font-weight: 500; line-height: 1.5; white-space: pre; }
+        code { font-family: ui-monospace, Menlo, monospace; font-size: .86em; font-weight: \(bold ? 600 : 500);
+               background: rgba(127,127,127,.15); padding: 1px 5px; border-radius: 5px; -webkit-box-decoration-break: clone; }
         .katex { font-size: 1.08em; }
         .katex-display { margin: 0.4em 0; overflow-x: auto; overflow-y: hidden; }
         </style></head><body>\(body(text))
@@ -57,6 +60,17 @@ enum MathHTML {
           var h = Math.ceil(document.body.getBoundingClientRect().height);
           window.webkit.messageHandlers.height.postMessage(h);
         }
+        function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+        // Code reads as code, not a wall of Courier: spaces don't break, so a snippet only wraps
+        // after "; " or ", " (statement / argument), or after "(" and "." when it has to
+        function codeBreaks() {
+          document.body.querySelectorAll(":not(pre) > code").forEach(function (c) {
+            c.innerHTML = c.textContent.split(/(?<=[;,]) /).map(function (seg) {
+              return seg.split(/(?<=[(.])/).map(function (p) { return esc(p).replace(/ /g, "&nbsp;"); }).join("<wbr>");
+            }).join(" ");
+          });
+        }
+        codeBreaks();
         try {
           document.querySelectorAll("[data-tex]").forEach(function (el) {
             katex.render(el.dataset.tex, el, { displayMode: el.tagName === "DIV", throwOnError: false });
@@ -81,6 +95,13 @@ enum MathHTML {
         }
 
         var s = text
+        // ```fenced``` blocks first, as their own paragraph, so $ and * inside stay literal
+        var blocks: [String] = []
+        s = s.replacing(/\n*```[^\n]*\n([\s\S]*?)\n?```\n*/) { m in
+            blocks.append("<pre><code>\(escape(String(m.1)))</code></pre>")
+            return "\n\n\u{E002}\(blocks.count - 1)\u{E003}\n\n"
+        }
+        s = s.trimmingCharacters(in: .newlines)
         s = s.replacing(/\$\$([\s\S]+?)\$\$/) { m in stash("<div data-tex=\"\(escape(String(m.1)))\"></div>") }
         s = s.replacing(/\$([^$\n]+?)\$/) { m in stash("<span data-tex=\"\(escape(String(m.1)))\"></span>") }
 
@@ -90,9 +111,12 @@ enum MathHTML {
         s = s.replacing(/\*([^*\s][^*]*)\*/) { m in "<i>\(m.1)</i>" }
 
         let paragraphs = s.components(separatedBy: "\n\n").map {
-            "<p>" + $0.replacingOccurrences(of: "\n", with: "<br>") + "</p>"
+            $0.hasPrefix("\u{E002}") ? $0 : "<p>" + $0.replacingOccurrences(of: "\n", with: "<br>") + "</p>"
         }
         var html = paragraphs.joined()
+        for (i, block) in blocks.enumerated() {
+            html = html.replacingOccurrences(of: "\u{E002}\(i)\u{E003}", with: block)
+        }
         for (i, piece) in math.enumerated() {
             html = html.replacingOccurrences(of: "\u{E000}\(i)\u{E001}", with: piece)
         }

@@ -73,7 +73,7 @@ struct CardEngine: UIViewRepresentable {
     // MARK: - Page
 
     static let page = #"""
-    <!doctype html><html><head>
+    <!doctype html><html><head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
     <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
@@ -124,6 +124,14 @@ struct CardEngine: UIViewRepresentable {
     .verdict { font-weight: 800; margin-bottom: 4px; }
     .ord { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
     .ord .chip .num { font-weight: 800; margin-right: 6px; }
+    /* Same look as flip cards (MathText): small grey monospace pill, math a touch over text size */
+    code { font-family: ui-monospace, Menlo, monospace; font-size: .86em; font-weight: 500; background: rgba(127,127,127,.15);
+           padding: 1px 5px; border-radius: 5px; -webkit-box-decoration-break: clone; }
+    .prompt code { font-weight: 600; }
+    .katex { font-size: 1.08em; }
+    /* ```fenced``` code: its own tinted box, line breaks and indents kept, scrolls sideways if long */
+    pre { margin: 8px 0; padding: 10px 12px; background: rgba(127,127,127,.12); border-radius: 10px; overflow-x: auto; }
+    pre code, .prompt pre code { background: none; padding: 0; font-size: .8em; font-weight: 500; line-height: 1.5; white-space: pre; }
     </style></head><body><div id="root"></div>
     <script>
     var C = null, S = {}, done = false, revealMode = false;
@@ -131,20 +139,35 @@ struct CardEngine: UIViewRepresentable {
     function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
     // Markdown-lite (**bold**, `code`) around TeX; math is rendered afterwards by auto-render
     function rich(s) {
+      // ```fenced``` blocks come out first so $ and * inside them stay literal
+      var blocks = [];
+      s = String(s).replace(/\n*```[^\n]*\n([\s\S]*?)\n?```\n*/g, function (_, code) {
+        blocks.push(code); return "\uE002" + (blocks.length - 1) + "\uE003";
+      });
       var parts = String(s).split(/(\$\$[\s\S]+?\$\$|\$[^$\n]+?\$)/);
       return parts.map(function (p, i) {
         if (i % 2) return esc(p);
         return esc(p).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/\*([^*\s][^*]*)\*/g, "<i>$1</i>").replace(/\n/g, "<br>");
-      }).join("");
+      }).join("").replace(/\uE002(\d+)\uE003/g, function (_, i) { return "<pre><code>" + esc(blocks[+i]) + "</code></pre>"; });
+    }
+    // Code reads as code, not a wall of Courier: spaces don't break, so a snippet only wraps
+    // after "; " or ", " (statement / argument), or after "(" and "." when it has to
+    function codeBreaks(el) {
+      el.querySelectorAll(":not(pre) > code").forEach(function (c) {
+        c.innerHTML = c.textContent.split(/(?<=[;,]) /).map(function (seg) {
+          return seg.split(/(?<=[(.])/).map(function (p) { return esc(p).replace(/ /g, "&nbsp;"); }).join("<wbr>");
+        }).join(" ");
+      });
     }
     function math(el) {
+      codeBreaks(el);
       try { renderMathInElement(el, { delimiters: [{left: "$$", right: "$$", display: true}, {left: "$", right: "$", display: false}], throwOnError: false }); } catch (e) {}
       // Shrink wide display equations to fit (down to 60%), then scroll
       el.querySelectorAll(".katex-display").forEach(function (d) {
         d.style.overflowX = "auto";
         var k = d.querySelector(".katex"); if (!k) return;
         var ratio = d.clientWidth / k.scrollWidth;
-        if (ratio < 1) k.style.fontSize = Math.max(0.6, ratio * 0.94) * 1.21 + "em";
+        if (ratio < 1) k.style.fontSize = Math.max(0.6, ratio * 0.94) * 1.08 + "em";
       });
     }
     function measure() { post({ type: "height", value: Math.ceil(document.body.getBoundingClientRect().height) }); }
@@ -153,6 +176,7 @@ struct CardEngine: UIViewRepresentable {
 
     function finish(correct) {
       done = true;
+      render();  // again, now that done is set, so the picks show green / red
       if (!revealMode) post({ type: "result", correct: correct });
       var w = h("div", "why");
       w.innerHTML = (revealMode ? "" : "<div class='verdict'>" + (correct ? "✓ Got it" : "✗ Not quite") + "</div>") + rich(C.why || "");

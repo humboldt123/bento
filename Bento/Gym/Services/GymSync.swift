@@ -9,6 +9,8 @@ enum GymSync {
     static let logosKey = "gymLogos"
     /// Gyms with a single dumbbell, shown with a house
     static let homesKey = "homeGyms"
+    /// Day ("yyyy-MM-dd") → its log as of the last successful sync
+    private static let syncedKey = "gymLogSynced"
 
     static func run(store: ExerciseStore, context: ModelContext) async {
         guard let api = NotionAPI() else { return }
@@ -66,11 +68,25 @@ enum GymSync {
         LogImporter.insert(days, gymName: nil, into: context, existing: existing)
         try? context.save()
 
+        // What each day looked like at the last sync, so an edit made in Notion comes down instead of
+        // being overwritten. Days synced before this existed count as matching the phone.
+        var synced = UserDefaults.standard.dictionary(forKey: syncedKey) as? [String: String] ?? [:]
+        defer { UserDefaults.standard.set(synced, forKey: syncedKey) }
+        let today = day.string(from: .now)
+
         let sessions = ((try? context.fetch(FetchDescriptor<WorkoutSession>())) ?? []).filter(\.isLogged)
         for session in sessions {
             let log = LogImporter.export([session], store: store)
             let key = String(log.prefix(10))
-            if remote[key]?.log == log { continue }
+            let base = synced[key] ?? log
+            if let theirs = remote[key]?.log, theirs != base, log == base, key != today,
+               let edited = LogImporter.parse(theirs, store: store).first {
+                LogImporter.replace(session, with: edited, context: context)
+                try? context.save()
+                synced[key] = theirs
+                continue
+            }
+            if remote[key]?.log == log { synced[key] = log; continue }
             var lines = log.components(separatedBy: "\n")
             let header = lines.removeFirst().components(separatedBy: " · ")
             let props: [String: Any] = [
@@ -79,11 +95,15 @@ enum GymSync {
                 "Gym": NotionAPI.select(session.gymName),
                 "Exercises": NotionAPI.richText(lines.joined(separator: "\n")),
             ]
-            if let page = remote[key]?.page {
-                try? await api.update(page: page, properties: props)
-            } else {
-                try? await api.create(in: db, properties: props)
-            }
+            do {
+                if let page = remote[key]?.page {
+                    try await api.update(page: page, properties: props)
+                } else {
+                    _ = try await api.create(in: db, properties: props)
+                }
+                // Only a push that landed counts, or a failed one would look like a Notion edit next time
+                synced[key] = log
+            } catch {}
         }
     }
 }

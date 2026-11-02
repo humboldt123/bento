@@ -126,14 +126,7 @@ enum LogImporter {
                 guard let ex = parsed.exercise else { continue }
                 let entry = WorkoutEntry(exerciseId: ex.id, order: i)
                 session.entries.append(entry)
-                for (j, s) in parsed.sets.enumerated() {
-                    let set = WorkoutSet(order: j, weight: s.weight, reps: s.reps)
-                    if let note = s.note {
-                        set.note = note
-                        if note.lowercased().contains("fail") { set.tags.append(SetTag.failure.rawValue) }
-                    }
-                    entry.sets.append(set)
-                }
+                entry.sets = makeSets(parsed.sets)
             }
             count += 1
         }
@@ -143,7 +136,30 @@ enum LogImporter {
         return count
     }
 
+    /// Rebuilds a day from its Notion row, for when the row was edited there and not here
+    static func replace(_ session: WorkoutSession, with day: ParsedDay, context: ModelContext) {
+        for entry in session.entries { context.delete(entry) }
+        session.entries = []
+        for (i, parsed) in day.entries.enumerated() {
+            guard let ex = parsed.exercise else { continue }
+            let entry = WorkoutEntry(exerciseId: ex.id, order: i)
+            session.entries.append(entry)
+            entry.sets = makeSets(parsed.sets)
+        }
+    }
+
     // MARK: - Private
+
+    private static func makeSets(_ parsed: [ParsedSet]) -> [WorkoutSet] {
+        parsed.enumerated().map { j, s in
+            let set = WorkoutSet(order: j, weight: s.weight, reps: s.reps)
+            if let note = s.note {
+                set.note = note
+                if note.lowercased().contains("fail") { set.tags.append(SetTag.failure.rawValue) }
+            }
+            return set
+        }
+    }
 
     /// "(seated row and rear delt skipped: machines taken)" -> [Low Row Machine, Reverse Fly Machine]
     private static func parseSkipped(_ line: String, store: ExerciseStore) -> [ExerciseDefinition] {

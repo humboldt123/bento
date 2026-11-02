@@ -320,6 +320,15 @@ struct SetEntrySheet: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 18) {
+                    // Form check between sets; shorter than the exercise page's so the steppers stay on screen
+                    if let url = exercise?.videoURL {
+                        LoopingVideo(url: url)
+                            .frame(height: 160)
+                            .background(Color.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .bentoCard(cornerRadius: 18)
+                    }
+
                     if let lastTime {
                         Text(lastTime)
                             .font(.subheadline)
